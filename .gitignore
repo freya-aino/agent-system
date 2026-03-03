@@ -1,7 +1,4 @@
 .venv
 .env
-.idea
+mlflow.db
 __pycache__
-beispiele.xlsx
-example-processing.ipynb
-.ipynb_checkpoints
