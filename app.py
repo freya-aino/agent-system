@@ -1,9 +1,24 @@
+import dotenv
+import os
+import mlflow
+import mlflow.openai as mlfopenai
+import mlflow.langchain as mlflangchain
+
+from typing import Union, List
+from langchain.messages import HumanMessage, AIMessage
+from langchain.tools import tool
+
+from agent_system import agents
+from agent_system.util import init_mlflow
+from agent_system.agents.conversation_agent import AvailableAgents
+
 from typing import List
-import asyncio, json, uuid, polars as pl
+import asyncio, json
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from agent_system import agents
 from dotenv import load_dotenv
 
 # --- Modelle ---
@@ -27,30 +42,24 @@ app = FastAPI()
 #mlflow.set_tracking_uri("http://mlflow:10008")
 
 
+mlfopenai.autolog()
+# mlflangchain.autolog()
+
+dotenv.load_dotenv()
+
+init_mlflow(experiment_name="test-experiment")
+
+from agent_system.util import OpenAI_LLM
+llm = OpenAI_LLM(os.environ["OPENAI_ENDPOINT"])
+
+
 @app.post("/v1/chat/completions")
 async def completions(req: ChatRequest):
     # (Optional) .env nur einmal in app startup laden, nicht bei jeder Anfrage
     load_dotenv()
 
     # Imports hier nur der Übersicht halber – besser: Modul-Top (Performance)
-    from agents.knowledge import WissensAgent, WissensAgentState
     from langchain_core.messages import HumanMessage, AIMessage
-
-    # Beispiele laden
-    df = pl.read_excel("./beispiele.xlsx")
-    beispiele = [
-        {
-            "frage": r['orginal_frage'],
-            "gedanken": r['gedanken'],
-            "antwort": r['antwort'],
-            "bewertung": {
-                "bezug_auf_quellen": str(r['bewertung_bezug_auf_quellen']),
-                "bezug_auf_sachverhalt": str(r['bewertung_bezug_auf_sachverhalt']),
-                "gedankengang_effizienz": str(r['bewertung_gedankengang_effizienz']),
-            }
-        }
-        for r in df.iter_rows(named=True)
-    ]
 
     # Queue für Progress-Events
     queue: asyncio.Queue = asyncio.Queue()
@@ -60,35 +69,15 @@ async def completions(req: ChatRequest):
     def on_progress(evt: dict):
         loop.call_soon_threadsafe(queue.put_nowait, evt)
 
-    # Agent vorbereiten
-    agent = WissensAgent(
-        max_llm_calls=6,
-        erwuenschte_note=3.0,
-        beste_note=1.4,
-        on_progress=on_progress
-    ).compile()
 
-    # Konversation aus Messages bauen
-    konv = []
-    for m in req.messages:
-        if m.role == 'user':
-            konv.append(HumanMessage(content=m.content))
-        else:
-            konv.append(AIMessage(content=m.content))
+    conversation_agent = agents.Conversation_Agent(llm=llm, agents=[])
+    ca_state = agents.CA_State(CurrentConversation = [m for m in req.messages])
 
-    state = WissensAgentState(
-        konversation=konv,
-        klassifikation=None,
-        llm_calls=0,
-        dokument_elemente_in_kontext=[],
-        gedankengang=None,
-        beispiele=beispiele,
-        lastNodeKonversation=False
-    )
 
     async def producer():
+        
         # Starte den Agenten asynchron im gleichen Event-Loop
-        task = asyncio.create_task(agent.ainvoke(state))  # <<<< wichtig: ainvoke
+        task = asyncio.create_task(conversation_agent.graph.ainvoke(ca_state))
 
         try:
             # Streame solange Progress, bis der Task fertig ist

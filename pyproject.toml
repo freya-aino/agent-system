@@ -20,4 +20,5 @@ dependencies = [
     "openai>=2.16.0",
     "pydantic>=2.12.5",
     "langgraph-swarm>=0.1.0",
+    "fastapi>=0.128.0",
 ]
