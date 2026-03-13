@@ -16,23 +16,28 @@ MIN_DOCUMENT_CHUNKS_RETREIVED = 1
 MAX_DOCUMENT_CHUNKS_RETREIVED= 3
 
 
-class KA_RefinedSearchQueries_ResponseFormat(BaseModel):
+class RAG_Agent_RefinedSearchQueries(BaseModel):
     keyword_suche: str = Field(..., description="Die such Query des users wird umformuliert so das sie auschließlich Informationen zu den verwendeten keywords in der Wissensdatenbank sucht.")
     kontext_suche: str = Field(..., description="Die such Query des users wird umformuliert so das sie im kontext der Frage relevante Informationen aus der Wissensdatenbank sucht.")
     auser_kontext_suche: str = Field(..., description="Die such Query des users wird umformuliert so das sie auserhalb des kontexts der Frage, mit sekundärem bezug auf den Kontext, Informationen aus der Wissensdatenbank sucht. ")
     anzahl_dokument_elemente: int = Field(..., description=f"Die Anzahl (${MIN_DOCUMENT_CHUNKS_RETREIVED}-${MAX_DOCUMENT_CHUNKS_RETREIVED}) an Dokument elementen welche aus der Wissensdatenbank gehohlt werden.", ge=MIN_DOCUMENT_CHUNKS_RETREIVED, le=MAX_DOCUMENT_CHUNKS_RETREIVED)
 
-class KA_State(BaseModel):
+class RAG_Agent_State(BaseModel):
     CurrentConversation: List[Union[HumanMessage, AIMessage]]
-    RefinedQueries: Optional[KA_RefinedSearchQueries_ResponseFormat]
-    DocumentChunksInContext: list[DocumentSearchOutput]
+    RefinedQueries: Optional[RAG_Agent_RefinedSearchQueries] = None
+    DocumentChunksInContext: list[DocumentSearchOutput] = []
 
 
-class KnowledgeAgent(Agent):
+class RAG_Agent(Agent):
+    """
+        Der Agent verwendet "Retreival Augmented Generation" um mit einer liste an Fragen wichtige Dokument elemente zu finden und diese in den Kontext zu laden.
+
+        Diese art der Generation is teuer, führt aber zu der höchsten genauigkeit an informationen 
+    """
 
     def __init__(self, llm: ChatOpenAI):
 
-        graph = StateGraph(KA_State)
+        graph = StateGraph(RAG_Agent_State)
         graph.add_node(self.SearchQueryRefinementNode.__name__, self.SearchQueryRefinementNode)
         graph.add_node(self.DocumentSearchNode.__name__, self.DocumentSearchNode)
         graph.add_edge(START, self.SearchQueryRefinementNode.__name__)
@@ -41,33 +46,34 @@ class KnowledgeAgent(Agent):
 
         super().__init__(
             llm=llm,
-            state=KA_State(
-                CurrentConversation=[],
-                RefinedQueries=None,
-                DocumentChunksInContext=[]
-            ),
+            stateType=RAG_Agent_State,
+            # state=RAG_Agent_State(
+            #     CurrentConversation=[],
+            #     RefinedQueries=None,
+            #     DocumentChunksInContext=[]
+            # ),
             graph=graph.compile(),
             responseFormats=[
-                KA_RefinedSearchQueries_ResponseFormat
+                RAG_Agent_RefinedSearchQueries
             ]
         )
     
     @mlflow.trace(name="KA_SearchQueryRefinementNode", span_type="func")
-    def SearchQueryRefinementNode(self, state: KA_State):
-        resp = self.llm.with_structured_output(KA_RefinedSearchQueries_ResponseFormat).invoke([
+    def SearchQueryRefinementNode(self, state: RAG_Agent_State):
+        resp = self.llm.with_structured_output(RAG_Agent_RefinedSearchQueries).invoke([
             format_system_prompt(
-                self.prompts[KA_RefinedSearchQueries_ResponseFormat], 
+                self.prompts[RAG_Agent_RefinedSearchQueries], 
                 documentSystemKnowledge=[]  # TODO add document system knowledge
             ),
             *state.CurrentConversation
         ])
-        resp = KA_RefinedSearchQueries_ResponseFormat(**resp)
+        resp = RAG_Agent_RefinedSearchQueries(**resp.model_dump())
         return {
             "RefinedQueries": resp
         }
 
     @mlflow.trace(name="KA_DocumentSearchNode", span_type="func")
-    def DocumentSearchNode(self, state: KA_State):
+    def DocumentSearchNode(self, state: RAG_Agent_State):
 
         assert state.RefinedQueries, "'RefinedQueries' should always be set when this is called!"
 

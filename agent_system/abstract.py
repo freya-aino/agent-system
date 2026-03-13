@@ -1,10 +1,10 @@
 import os
 
+from enum import Enum
 from mlflow import genai
 from abc import ABC
 from typing import List
 from pydantic import BaseModel
-from enum import Enum
 
 from langchain_openai import ChatOpenAI
 from langgraph.graph.state import CompiledStateGraph
@@ -29,13 +29,13 @@ from langgraph.graph.state import CompiledStateGraph
 #             },
 #         )
 
-def initializePrompt(promptsDir: str, responseFormat: type[BaseModel], language: str = "de"): # TODO - dont hardcode language
-    
+def getLocalPromptTemplate(promptsDir: str, name: str):
     assert os.path.isdir(promptsDir), f"path for prompts '{promptsDir}' does not exist!"
-
-    with open(f"{promptsDir}/{responseFormat.__name__}.md") as f:
+    with open(f"{promptsDir}/{name}.md") as f:
         template = f.read()
+    return template
     
+def uploadPromptTemplate(template: str, responseFormat: type[BaseModel], language: str = "de"): # TODO - dont hardcode language
     genai.register_prompt(
         name=responseFormat.__name__,
         template=template,
@@ -46,34 +46,43 @@ def initializePrompt(promptsDir: str, responseFormat: type[BaseModel], language:
         },
     )
 
-
 class Language(Enum):
     DE = "de"
 
 class Agent(ABC):
-    def __init__(self, llm: ChatOpenAI, state: BaseModel, graph: CompiledStateGraph, responseFormats: List[type[BaseModel]], promptsDir: str = "./agent_system/prompts"):
+    def __init__(self, llm: ChatOpenAI, stateType: type[BaseModel], graph: CompiledStateGraph, responseFormats: List[type[BaseModel]], promptsDir: str = "./agent_system/prompts"):
         # self.responseFormats = responseFormats
         self.llm = llm # TODO - make llm configurable for each step
         self.graph = graph
-        self.state = state
+        # self.state = type(self.state)(**state.model_dump())
+        self.stateType = stateType
 
-        # TODO - add prompt versioning
+        # TODO - add prompt versioning and add new prompt version
         version = "latest"
         self.prompts = {}
         for rf in responseFormats:
-            p = genai.search_prompts(f"name='{rf.__name__}'")
-            if len(p) <= 0:
-                print(f"no prompts found with the name='{rf.__name__}', creating ...")
-                initializePrompt(promptsDir=promptsDir, responseFormat=rf)
-            
-            print(f"prompts found for name='{rf.__name__}', loading...")
-            self.prompts[rf] = genai.load_prompt(f"prompts:/{rf.__name__}@{version}")
 
-    def forward(self):
-        return type(self.state)(**self.graph.invoke(self.state))
-    
-    def update(self, newState: BaseModel):
-        self.state = newState
+            pp = genai.search_prompts(f"name='{rf.__name__}'")
+            local_p = getLocalPromptTemplate(promptsDir=promptsDir, name=rf.__name__)
+
+            # create new if non exist
+            if len(pp) <= 0:
+                print(f"no prompts found with the name='{rf.__name__}', creating ...")
+                uploadPromptTemplate(template=local_p, responseFormat=rf)
+            # else:
+            #     p = genai.load_prompt(rf.__name__)
+            #     # make new version if local template changed
+            #     if p.template != local_p:
+            #         print(f"new version for prompt name='{rf.__name__}' found, updating...")
+            #         uploadPromptTemplate(template=local_p, responseFormat=rf)
+
+            print(f"loading prompt '{rf.__name__}' ...")
+            p = genai.load_prompt(rf.__name__)
+            self.prompts[rf] = p
+
+    def forward(self, **kwargs):
+        state = self.stateType(**kwargs)
+        return self.graph.invoke(state)
 
 
 class DocumentRetreiver(ABC):
@@ -82,4 +91,3 @@ class DocumentRetreiver(ABC):
 
     def retreive(self, query: str, top_k: int):
         raise NotImplementedError
-

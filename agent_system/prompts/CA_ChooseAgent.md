@@ -4,4 +4,6 @@ Du wählst aus der Liste an Agenten den Agenten der grade am besten erscheint.
 
 # Liste an Agenten
 {% for a in currentlyAvailableAgents %}
-- {{ a }}
+{{ a }}
+---
+{% endfor %}

@@ -20,7 +20,7 @@ class AzureDocumentRetreiver(DocumentRetreiver):
         self.contentKey = os.environ["AZURE_AI_SEARCH_CONTENT_KEY"]
 
     def retreive(self, query: str, top_k: int):
-        res = AzureAISearchRetriever(
+        resp = AzureAISearchRetriever(
             top_k = top_k,
             api_key=os.environ["AZURE_AI_SEARCH_API_KEY"],
             service_name=os.environ["AZURE_AI_SEARCH_SERVICE_NAME"],
@@ -29,9 +29,7 @@ class AzureDocumentRetreiver(DocumentRetreiver):
         ).invoke(query)
         
         out = []
-        for r in res:
-            rr = r.model_dump()
-            assert self.sourceKey in rr, f"'{self.sourceKey}' not found in vector-db return format"
-            out.append(DocumentSearchOutput(Source=rr[self.sourceKey], Content=rr["metadata"][self.contentKey]))
+        for document in resp:
+            out.append(DocumentSearchOutput(Source=document.metadata[self.sourceKey], Content=document.page_content))
         return out
 
