@@ -1,3 +1,5 @@
+import json
+import asyncio
 import dotenv
 import os
 import mlflow
@@ -22,61 +24,98 @@ from agent_system.agents.conversation_agent import AvailableAgents
 #     key_points: list[str] = Field(description="The key points of the review. Lowercase, 1-3 words each.")
 
 
-
-
-if __name__ == "__main__":
-
-    mlfopenai.autolog()
-    # mlflangchain.autolog()
-
+async def main():
+    
+    # TODO - manage secrets outside
     dotenv.load_dotenv()
 
-    init_mlflow(experiment_name="test-experiment")
+    # init_mlflow(experiment_name="test-experiment")
+    # mlfopenai.autolog()
+    # mlflangchain.autolog()
 
     from agent_system.util import OpenAI_LLM
     llm = OpenAI_LLM(os.environ["OPENAI_ENDPOINT"])
 
+    conversation_agent = agents.Conversation_Agent(llm=llm, agents=[])
+    state = agents.CA_State(CurrentConversation=[HumanMessage("Hi kasnnt du mir eine kurze zusammenfassung von einer übersicht über Spechte geben, schreibe 2 Paragraphen")])
 
-    conversation_agent = agents.Conversation_Agent(llm=llm, agents=[
-        # agents.CAG_Agent(llm),
-        # agents.RAG_Agent(llm),
-        # agents.Reasoning_Agent(llm)
-    ])
+    outputs = {}
+    conversation_bracket_count = 0
+    async for chunk, context in conversation_agent.aforward(**state.model_dump()):
 
-    ca_state = agents.CA_State(**
-        {
-            "CurrentConversation": [HumanMessage("")]
-        }
-    )
+        if context["langgraph_node"] in outputs:
+            outputs[context["langgraph_node"]] += chunk.content
+        else:
+            outputs[context["langgraph_node"]] = chunk.content
 
-    agent_states = {k: None for k, a in conversation_agent.agents.items()}
+        if context["langgraph_node"] != "ConversationNode":
+            continue
 
+        if "{" in chunk.content:
+            conversation_bracket_count += 1
+        if "}" in chunk.content:
+            conversation_bracket_count -= 1
 
-    for _ in range(10):
-
-        ca_state = agents.CA_State(**ca_state.model_dump())
-        ca_state = agents.CA_State(**conversation_agent.forward(**ca_state.model_dump()))
-
-        print(f"answer     => {ca_state.CurrentConversation[-1].content}")
-
-
-        # print(f"next_agent => {ca_state.HandofAgent}")
-
-        # agent_name = ca_state.HandofAgent.gewählter_agent.name
-
-        # # if ca_state.HandofAgent.verwende_agent:
-
-        # next_agent = conversation_agent.agents[agent_name]
-        # current_agent_state = agent_states[agent_name]
-        # current_agent_state.CurrentConversation.append(ca_state.CurrentConversation[:-2])
+        if conversation_bracket_count == 0:
+            # print(chunk.content, end="", flush=True)
+            print(chunk.content)
 
 
-        # print(current_agent_state.model_dump())
+        # if "{" in chunk.content:
+        #     is_currently_structured_output = True
+        #     new_structured_output = True
+        # if "}" in chunk.content:
+        #     is_currently_structured_output = False
 
-        # new_agent_state = next_agent.forward(**current_agent_state)
-        # agent_states[ca_state.HandofAgent.name] = new_agent_state
+        # if new_structured_output:
+        #     new_structured_output = False
+        #     structured_outputs.append([""])
+        # if is_currently_structured_output:
+        #     structured_outputs[-1] += chunk.content
+        # else:
+        #     normal_output += chunk.content
+        #     print(chunk.content, end="", flush=True)
 
-        # print(f"Agent out  => {next_agent}")
+if __name__ == "__main__":
+
+    asyncio.run(main())
+    
+
+
+    # ca_state = agents.CA_State(**
+    #     {
+    #         "CurrentConversation": [HumanMessage("")]
+    #     }
+    # )
+
+    # agent_states = {k: None for k, a in conversation_agent.agents.items()}
+
+
+    # for _ in range(10):
+
+    #     ca_state = agents.CA_State(**ca_state.model_dump())
+    #     ca_state = agents.CA_State(**conversation_agent.forward(**ca_state.model_dump()))
+
+    #     print(f"answer     => {ca_state.CurrentConversation[-1].content}")
+
+
+    #     # print(f"next_agent => {ca_state.HandofAgent}")
+
+    #     # agent_name = ca_state.HandofAgent.gewählter_agent.name
+
+    #     # # if ca_state.HandofAgent.verwende_agent:
+
+    #     # next_agent = conversation_agent.agents[agent_name]
+    #     # current_agent_state = agent_states[agent_name]
+    #     # current_agent_state.CurrentConversation.append(ca_state.CurrentConversation[:-2])
+
+
+    #     # print(current_agent_state.model_dump())
+
+    #     # new_agent_state = next_agent.forward(**current_agent_state)
+    #     # agent_states[ca_state.HandofAgent.name] = new_agent_state
+
+    #     # print(f"Agent out  => {next_agent}")
 
 
 

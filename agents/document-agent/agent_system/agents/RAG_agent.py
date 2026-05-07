@@ -23,7 +23,7 @@ class RAG_Agent_RefinedSearchQueries(BaseModel):
     anzahl_dokument_elemente: int = Field(..., description=f"Die Anzahl (${MIN_DOCUMENT_CHUNKS_RETREIVED}-${MAX_DOCUMENT_CHUNKS_RETREIVED}) an Dokument elementen welche aus der Wissensdatenbank gehohlt werden.", ge=MIN_DOCUMENT_CHUNKS_RETREIVED, le=MAX_DOCUMENT_CHUNKS_RETREIVED)
 
 class RAG_Agent_State(BaseModel):
-    CurrentConversation: List[Union[HumanMessage, AIMessage]]
+    CurrentConversation: List[Union[HumanMessage, AIMessage]] = []
     RefinedQueries: Optional[RAG_Agent_RefinedSearchQueries] = None
     DocumentChunksInContext: list[DocumentSearchOutput] = []
 

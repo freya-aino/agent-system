@@ -30,7 +30,7 @@ class RA_Evaluate(BaseModel):
 
 
 class Reasoning_Agent_State(BaseModel):
-    CurrentConversation: List[Union[HumanMessage, AIMessage]]
+    CurrentConversation: List[Union[HumanMessage, AIMessage]] = []
     UserQuestion: Optional[str] = None
     DocumentChunksInContext: List[DocumentSearchOutput] = []
     Reasoning: Optional[str] = None

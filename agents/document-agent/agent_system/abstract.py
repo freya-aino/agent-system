@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 from enum import Enum
@@ -54,7 +55,6 @@ class Agent(ABC):
         # self.responseFormats = responseFormats
         self.llm = llm # TODO - make llm configurable for each step
         self.graph = graph
-        # self.state = type(self.state)(**state.model_dump())
         self.stateType = stateType
 
         # TODO - add prompt versioning and add new prompt version
@@ -83,6 +83,15 @@ class Agent(ABC):
     def forward(self, **kwargs):
         state = self.stateType(**kwargs)
         return self.graph.invoke(state)
+    
+    async def aforward(self, **kwargs):
+        state = self.stateType(**kwargs)
+        async for chunk, context in self.graph.astream(input=state, stream_mode="messages", version="v2"):
+            # chunk = content='' additional_kwargs={'parsed': CA_ChooseAgent(gewählter_agent=<AvailableAgents.CAG_Agent: 1>, verwende_agent=False, begründung='Es gibt noch kein spezifisches Anliegen oder Kontext, daher ist kein Agent notwendig. Erst nach Klärung des Anliegens kann ein passender Agent ausgewählt werden.'), 'refusal': None} response_metadata={'token_usage': None, 'model_provider': 'openai', 'model_name': 'gpt-4.1-2025-04-14', 'system_fingerprint': '', 'id': '', 'service_tier': 'default'} id='' tool_calls=[] invalid_tool_calls=[] tool_call_chunks=[]
+            # context = {'langgraph_step': 2, 'langgraph_node': 'AgentChoiceNode', 'langgraph_triggers': ('branch:to:AgentChoiceNode',), 'langgraph_path': ('__pregel_pull', 'AgentChoiceNode'), 'langgraph_checkpoint_ns': 'AgentChoiceNode:2111057d-b349-62d8-6579-7e8f6b1e9d80', 'checkpoint_ns': 'AgentChoiceNode:2111057d-b349-62d8-6579-7e8f6b1e9d80', 'ls_provider': 'openai', 'ls_model_name': 'gpt-4.1', 'ls_model_type': 'chat', 'ls_temperature': 0.65, 'ls_max_tokens': 1000}
+            yield chunk, context
+
+
 
 
 class DocumentRetreiver(ABC):

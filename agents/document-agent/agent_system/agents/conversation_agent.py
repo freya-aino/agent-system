@@ -42,7 +42,7 @@ class CA_ChooseAgent(BaseModel):
     begründung: str = Field(..., description="eine sehr kurze Begründung einen bestimmten oder keinen agenten zu wählen")
 
 class CA_State(BaseModel):
-    CurrentConversation: Annotated[List[Union[HumanMessage, AIMessage]], operator.add]
+    CurrentConversation: Annotated[List[Union[HumanMessage, AIMessage]], operator.add] = []
     InformationKeyPoints: Annotated[List[str], operator.add] = []
     InternalState: Annotated[List[str], operator.add] = []
     Classification: Annotated[List[CA_Classification], operator.add] = []

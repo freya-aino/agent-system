@@ -19,7 +19,7 @@ class CAG_Agent_Answer(BaseModel):
     antwort: str = Field(..., description="") # TODO
 
 class CAG_Agent_State(BaseModel):
-    CurrentConversation: List[Union[HumanMessage, AIMessage]]
+    CurrentConversation: List[Union[HumanMessage, AIMessage]] = []
     Classification: Optional[CAG_Agent_DomainClassification] = None
     DomainKnowledge: List[str] = []
     Answer: Optional[CAG_Agent_Answer] = None
