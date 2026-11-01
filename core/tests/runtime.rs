@@ -69,3 +69,32 @@ fn invalid_input_is_a_failure_not_a_panic() {
     let r = rt.run_microbe(&mh, &json!(42), 1).unwrap();
     assert!(matches!(r.output, Err(Failure::InvalidInput { .. })));
 }
+
+#[test]
+fn cell_evaluation_yields_distributions() {
+    let dir = tempfile::tempdir().unwrap();
+    seed(dir.path());
+    let store = Store::open(dir.path()).unwrap();
+    let rt = Runtime::new(&store, &Stub { answer_tokens: 5 });
+    // find the refine Cell via the Microbe
+    let out = Command::new(env!("CARGO_BIN_EXE_seed_document_qa"))
+        .args([dir.path().to_str().unwrap(), concat!(env!("CARGO_MANIFEST_DIR"), "/../agents/document-agent/agent_system/prompts"), "model-x-1", "idx-1"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    let refine = HashId::parse(text.lines().find(|l| l.starts_with("cells")).unwrap().split('=').nth(1).unwrap().trim()).unwrap();
+    let ds = Dataset {
+        name: "refine-min-io".into(),
+        cases: vec![
+            Case { input: json!("a"), expect: Some(json!({"frage": "a", "keyword_suche": "k", "kontext_suche": "c", "auser_kontext_suche": "a", "anzahl_dokument_elemente": 2})) },
+            Case { input: json!("b"), expect: None },
+            Case { input: json!(1), expect: None }, // schema-invalid input
+        ],
+    };
+    let rep = evaluate_cell(&rt, &refine, &ds, &[1, 2]).unwrap();
+    assert_eq!(rep.runs, 6);
+    assert!((rep.valid_rate.mean - 4.0 / 6.0).abs() < 1e-9);
+    assert_eq!(rep.exact_match.as_ref().unwrap().n, 2); // one case with an expectation x two seeds
+    assert_eq!(rep.failures.len(), 2);
+    assert!(rep.save(&store).is_ok());
+}
