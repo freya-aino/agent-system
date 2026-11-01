@@ -94,3 +94,24 @@ fn registry_aliases_search_closure() {
     assert_eq!(r.search(PrimitiveKind::Prompt, "leaf").unwrap().len(), 0);
     assert_eq!(r.get("leaf@1.0.0").unwrap().status, RegistryStatus::Deprecated);
 }
+
+#[test]
+fn pool_ranks_evicts_and_matches_slots() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::open(dir.path()).unwrap();
+    let (x, y) = (json!({"type": "string"}), json!({"type": "integer"}));
+    let a = cell(&s, "a", x.clone(), x.clone());
+    let b = cell(&s, "b", x.clone(), x.clone());
+    let c = cell(&s, "c", x.clone(), x.clone());
+    let d = cell(&s, "d", y.clone(), x.clone());
+    let mut pool = Pool::new("cells", 2);
+    assert_eq!(pool.offer(&s, &a, 0.5).unwrap(), None);
+    assert_eq!(pool.offer(&s, &b, 0.9).unwrap(), None);
+    assert_eq!(pool.offer(&s, &c, 0.7).unwrap(), Some(a.clone())); // lowest evicted
+    pool.offer(&s, &d, 0.8).unwrap();
+    let slot = Slot { input: x.clone(), output: x.clone() };
+    assert_eq!(pool.candidates(&slot).iter().map(|e| e.unit.clone()).collect::<Vec<_>>(), vec![b.clone()]);
+    assert_eq!(pool.surface().len(), 2);
+    assert!(pool.offer(&s, &b, f64::NAN).is_err());
+    assert_eq!(pool.snapshot(&s).unwrap(), pool.snapshot(&s).unwrap());
+}
