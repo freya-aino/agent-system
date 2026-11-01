@@ -22,9 +22,9 @@ fn main() -> Result<()> {
     let put = |kind, name: &str, body: Value| -> Result<HashId> {
         reg.put(&Primitive { kind, name: name.into(), version: "1.0.0".into(), schema: format!("{name}/v1"), body, deps: vec![] }, prov("import"))
     };
-    let prompt = |file: &str, name: &str, vars: &[&str]| -> Result<HashId> {
+    let prompt = |file: &str, name: &str, vars: &[&str], vars_map: Value, user: &str| -> Result<HashId> {
         let text = std::fs::read_to_string(format!("{prompts}/{file}"))?;
-        put(PrimitiveKind::Prompt, name, json!({ "template": text, "variables": vars, "source": file }))
+        put(PrimitiveKind::Prompt, name, json!({ "template": text, "variables": vars, "vars": vars_map, "user": user, "source": file }))
     };
 
     let model = put(
@@ -37,14 +37,15 @@ fn main() -> Result<()> {
     let text = json!({ "type": "string" });
     let queries = json!({
         "type": "object",
-        "required": ["keyword_suche", "kontext_suche", "auser_kontext_suche", "anzahl_dokument_elemente"],
+        "required": ["frage", "keyword_suche", "kontext_suche", "auser_kontext_suche", "anzahl_dokument_elemente"],
         "properties": {
-            "keyword_suche": text, "kontext_suche": text, "auser_kontext_suche": text,
+            "frage": text, "keyword_suche": text, "kontext_suche": text, "auser_kontext_suche": text,
             "anzahl_dokument_elemente": { "type": "integer", "minimum": 1, "maximum": 3 }
         }
     });
-    let chunks = json!({ "type": "array", "items": { "type": "object", "required": ["Source", "Content"],
-        "properties": { "Source": text, "Content": text } } });
+    let chunks = json!({ "type": "object", "required": ["frage", "chunks"], "properties": { "frage": text,
+        "chunks": { "type": "array", "items": { "type": "object", "required": ["Source", "Content"],
+        "properties": { "Source": text, "Content": text } } } } });
 
     let cell = |members: &[(&str, &HashId)], input: &Value, output: &Value, pol: &HashId| Unit {
         level: Level::Cell,
@@ -59,7 +60,7 @@ fn main() -> Result<()> {
     };
 
     // Cell 1: query refinement (Transform, model-bound).
-    let p_refine = prompt("RAG_Agent_RefinedSearchQueries.md", "refine-queries-prompt", &["documentSystemKnowledge"])?;
+    let p_refine = prompt("RAG_Agent_RefinedSearchQueries.md", "refine-queries-prompt", &["documentSystemKnowledge"], json!({}), "")?;
     let c_refine = store.commit_unit(&cell(&[("prompt", &p_refine), ("model", &model)], &text, &queries, &limits("refine-limits", 1024)?), "seed")?;
 
     // Cell 2: document search (Store-read, binds the pinned index version).
@@ -69,13 +70,14 @@ fn main() -> Result<()> {
         json!({
             "transport": "azure-ai-search", "read_only": true, "index_version": index_version,
             "config_env": ["AZURE_AI_SEARCH_SERVICE_NAME", "AZURE_AI_SEARCH_INDEX_NAME", "AZURE_AI_SEARCH_SOURCE_KEY", "AZURE_AI_SEARCH_CONTENT_KEY"],
-            "query_field": "auser_kontext_suche", "top_k_field": "anzahl_dokument_elemente"
+            "query_field": "auser_kontext_suche", "top_k_field": "anzahl_dokument_elemente",
+            "result_field": "chunks", "passthrough": ["frage"]
         }),
     )?;
     let c_search = store.commit_unit(&cell(&[("tool", &tool)], &queries, &chunks, &limits("search-limits", 0)?), "seed")?;
 
     // Cell 3: answer (Transform, model-bound).
-    let p_answer = prompt("CAG_Agent_Answer.md", "answer-prompt", &["relevantDomainKnowledge"])?;
+    let p_answer = prompt("CAG_Agent_Answer.md", "answer-prompt", &["relevantDomainKnowledge"], json!({ "relevantDomainKnowledge": "/chunks" }), "/frage")?;
     let c_answer = store.commit_unit(&cell(&[("prompt", &p_answer), ("model", &model)], &chunks, &text, &limits("answer-limits", 1024)?), "seed")?;
 
     let spec = MicrobeSpec {
