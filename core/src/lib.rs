@@ -3,6 +3,7 @@
 pub mod eval;
 pub mod hash;
 pub mod microbe;
+pub mod pool;
 pub mod primitive;
 pub mod registry;
 pub mod runtime;
@@ -15,5 +16,6 @@ pub use microbe::{compile_microbe, MicrobeSpec};
 pub use registry::{Registry, RegistryEntry, RegistryStatus};
 pub use runtime::{Connectors, Failure, ModelRequest, ModelResponse, RunResult, Runtime, Trace};
 pub use eval::{evaluate_cell, Case, CellReport, Dataset, Summary};
+pub use pool::{Pool, Slot};
 pub use store::{Status, StatusEvent, Store};
 pub use unit::{Level, Provenance, Unit};
