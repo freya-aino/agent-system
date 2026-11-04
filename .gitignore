@@ -1,5 +1,0 @@
-.venv
-.env
-mlflow.db
-__pycache__
-target/
