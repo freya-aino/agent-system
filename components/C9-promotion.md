@@ -14,9 +14,9 @@ The only path from S1 (inbound zone) to S2. A candidate Unit is proposed, put th
 
 ## Inputs / Outputs
 Inputs:
-- Candidate `HashId` (Substrate or Microbe set; may be a router lineage together with priors).
+- Candidate `HashId` (Swarm or Agent set; may be a router lineage together with priors).
 - Evidence: evaluation `Trace`s and metric distributions, genealogy, baseline (currently active hash for the same function), adversarial test results.
-- Approval events from approvers (human now, Nature later).
+- Approval events from approvers (human now, the Optimizer later).
 - Demotion and drift signals: telemetry-derived `drift_detected`, `rolled_back`, `quarantined` events (S1 inbound events created from the telemetry channel, telemetry.md; `rollout_stage`, `deployment_*`, `cold_start`, `demoted`).
 
 Outputs (all as `Event { id, shard, seq, prev, ts, actor, kind, subject, data, evidence }` (trace-event.md) in the inbound zone, except the bundle):
@@ -24,7 +24,7 @@ Outputs (all as `Event { id, shard, seq, prev, ts, actor, kind, subject, data, e
 - `gate_result` per gate (data: gate name, verdict pass|fail|inconclusive, statistics, thresholds, seed, n).
 - `approved` / `rejected` (data per trace-event.md `{ proposal, actor, reason, scope }`; see Approval for the extension fields).
 - `Bundle` (per `bundle.md`) published to the registry; `evidence` lists the gate and approval event hashes.
-- Negative-signal `experiment_outcome` events for failed gates and for demotions, consumed by Nature/Breeder as typed negative signal.
+- Negative-signal `experiment_outcome` events for failed gates and for demotions, consumed by Optimizer/Meta-Optimizer as typed negative signal.
 
 ## Interfaces
 - `propose(candidate, baseline?, rollout_plan) -> proposal_id` (appends `promotion_proposed`).
@@ -48,8 +48,8 @@ For router candidates, additional gate inputs: priors reference only members in 
 Insufficient samples gives `inconclusive`, which blocks like `fail` but is recorded distinctly.
 
 ## Approval
-- Approval is an append-only event with one shape for all approver types: `approved|rejected` with `actor` (identity of the approver, `human:<id>` or `nature:<id>`), `subject` = proposal candidate hash, `data` = contract `{ proposal, actor, reason, scope }` (scope = which functions, which rollout stages) extended with `decision, expires?, policy_hash` (component extension; `reason` carries the rationale), `evidence` = the `gate_result` events reviewed.
-- Phase 1: policy requires at least one human approval. Phase 2: Nature may approve for classes of change the policy declares low-risk; the event shape is identical, only `actor` differs, and policy decides which actors count.
+- Approval is an append-only event with one shape for all approver types: `approved|rejected` with `actor` (identity of the approver, `human:<id>` or `optimizer:<id>`), `subject` = proposal candidate hash, `data` = contract `{ proposal, actor, reason, scope }` (scope = which functions, which rollout stages) extended with `decision, expires?, policy_hash` (component extension; `reason` carries the rationale), `evidence` = the `gate_result` events reviewed.
+- Phase 1: policy requires at least one human approval. Phase 2: the Optimizer may approve for classes of change the policy declares low-risk; the event shape is identical, only `actor` differs, and policy decides which actors count.
 - Approvals bind to a candidate hash and a policy hash; a new candidate hash needs new approval. An approval can be superseded by a later `rejected` event; the log is never edited.
 - Self-approval prohibition: an actor that produced the candidate or reviewed gates as its own pipeline cannot be the sole approver (policy-enforced; actor lineage checked).
 
@@ -71,7 +71,7 @@ Stage transitions are driven by S2 against thresholds in `manifest.rollout.plan`
 
 **Rollback**: S2 routes back to `manifest.rollout.previous` (kept loaded or pullable by hash); no rebuild, no S1 involvement. Reports `rolled_back` in its telemetry; S1 records it in the event log when it ingests the envelope.
 
-**Demotion**: drift, SLO breach, or kill-switch causes quarantine or retirement. The demotion reaches S1 as telemetry; C9 appends `demoted`/`rolled_back`/`quarantined` and an `experiment_outcome` negative signal for the candidate and its lineage clade so Nature/Breeder and the router priors incorporate it. Re-promotion needs a new proposal and fresh gates.
+**Demotion**: drift, SLO breach, or kill-switch causes quarantine or retirement. The demotion reaches S1 as telemetry; C9 appends `demoted`/`rolled_back`/`quarantined` and an `experiment_outcome` negative signal for the candidate and its lineage subtree so Optimizer/Meta-Optimizer and the router priors incorporate it. Re-promotion needs a new proposal and fresh gates.
 
 ## Invariants
 - Only path S1 to S2 is a published, signed bundle; S1 has no write path into S2; registry is pull.
@@ -93,7 +93,7 @@ Stage transitions are driven by S2 against thresholds in `manifest.rollout.plan`
 
 ## Open questions
 - Exact thresholds and margins by class of change; sequential testing vs fixed-n for non-inferiority.
-- How Nature qualifies for approval (track record and calibration) and the audit of its decisions.
+- How the Optimizer qualifies for approval (track record and calibration) and the audit of its decisions.
 - Multi-bundle atomic promotions (router plus members that must change together).
 - Whether shadow mirroring needs caller consent beyond `no_sample`.
 - Key management: rotation, threshold signatures, offline root.

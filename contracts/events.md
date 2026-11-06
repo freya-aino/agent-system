@@ -14,7 +14,7 @@ elite_replaced   { archive: HashId, cell: string, old: HashId?, new: HashId, des
 // experiments
 experiment_outcome { Outcome }                                   // trace-event.md
 generation       { population: Population, gen: int, evaluated: int, committed: int, cost: Budget }
-campaign_started { campaign: HashId, breeder: HashId, nature: HashId, budget: Budget, seeds: [HashId] }
+campaign_started { campaign: HashId, meta_optimizer: HashId, optimizer: HashId, budget: Budget, seeds: [HashId] }
 campaign_stopped { campaign: HashId, reason: "plateau"|"budget"|"manual"|"diverged", value: number? }
 baseline_result  { campaign: HashId, baseline: "mcmc"|"aflow"|"gepa"|string, evaluation: HashId, cost: Budget }
 surrogate_used   { campaign: HashId, model: HashId, predicted: number, actual: number? }

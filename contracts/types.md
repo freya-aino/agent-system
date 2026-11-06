@@ -26,7 +26,7 @@ FitnessRecord {                                 // result of evaluating one Unit
   verdicts: map<MetricRef, "pass"|"fail"|"na">, // hard constraints
   judge_assisted: bool
 }
-Evaluation  { id: HashId, substrate: HashId?, dataset: HashId?, metrics: [MetricRef], fitness_spec: FitnessSpec,
+Evaluation  { id: HashId, swarm: HashId?, dataset: HashId?, metrics: [MetricRef], fitness_spec: FitnessSpec,
               seeds: [int], baselines: [HashId], variant: VariantRef }
 VariantRef  { suite: string, kind: "train" | "held_out" | "perturbed", seed: int }
 Dataset     { id: HashId, kind: "minimal_io" | "workload", items: BlobRef, source: "synthetic"|"exported", sanitised: bool }

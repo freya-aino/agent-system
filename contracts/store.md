@@ -10,7 +10,7 @@ has(zone, HashId) -> bool
 link(zone, child: HashId, parents: [HashId], provenance: Provenance, fence: Fence) -> ok
         // idempotent for identical (child, parents, provenance); rejects cycles; >1 parent = recombination
 lineage(zone, HashId) -> [HashId]                // ancestry
-children(zone, HashId) -> [HashId]               // needed for clade credit
+children(zone, HashId) -> [HashId]               // needed for subtree credit
 
 append(zone, shard, Event, fence: Fence) -> EventId   // compare-and-set on seq; only the current lease holder succeeds
 query(zone, shard, filter, order, page) -> Page<Event>

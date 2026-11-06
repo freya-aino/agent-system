@@ -7,8 +7,8 @@ Make every run, decision and state change inspectable and attributable, in both 
 | Signal | Source | Spec |
 |--------|--------|------|
 | Traces (events with causal edges, connector calls) | Runtime | 06 |
-| Metrics at Cell, Microbe, Substrate level; fitness reports | Metrics library, evaluation | 08 |
-| Derived cost (model price × tokens) | Traces + DNA | 06, 07 |
+| Metrics at Node, Agent, Swarm level; fitness reports | Metrics library, evaluation | 08 |
+| Derived cost (model price × tokens) | Traces + Unit specs | 06, 07 |
 | Stage events (live execution graph) | Trace projection | 15 |
 | Provider response metadata (model snapshot, version headers) for **drift detection** | Ephemeral connectors | 07 |
 | Audit events | Store status events, promotion, routing, flags | 10, 14 |
@@ -17,7 +17,7 @@ Make every run, decision and state change inspectable and attributable, in both 
 ## Audit log
 Append-only, content-addressed, one stream per zone. Records at minimum:
 - status changes of Units (candidate, committed, promoted, retired, quarantined), with actor and reason,
-- promotion proposals, gate results, approvals (human or Nature), rollouts, rollbacks, quarantines,
+- promotion proposals, gate results, approvals (human or the Optimizer), rollouts, rollbacks, quarantines,
 - exports from outbound to inbound (what policy, how many records),
 - requests flagged `no_sample` (content-free: that it was flagged, never what it contained),
 - kill-switch use (below) and configuration changes of fronts and adapters.
@@ -35,7 +35,7 @@ The triggers in spec 14 are computed from these signals: quality below the floor
 A mechanism only; who may invoke it is a governance question.
 ```
 halt(scope, mode, reason)
-  scope: request | task | microbe-function | deployment | zone | global
+  scope: request | task | agent-function | deployment | zone | global
   mode:  drain (finish in-flight tasks, accept none) | stop (cancel in-flight, spec 06 cancel)
 ```
 Effects: the front stops routing to the scope (spec 15), the deployment moves to `draining` or `quarantined` (spec 14), an audit event is written. In the inbound zone the same mechanism stops experiments (e.g. runaway cost).

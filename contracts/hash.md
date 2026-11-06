@@ -13,5 +13,5 @@
 
 ## Invariants
 - Same description ⇒ same hash; any behavioural change ⇒ new hash.
-- The hash identifies a genome; behaviour is a distribution (LLMs are nondeterministic), so fitness is always statistical.
+- The hash identifies a spec; behaviour is a distribution (LLMs are nondeterministic), so fitness is always statistical.
 - Tag-like integrity needed for safety (`role`) is inside the hash and therefore verifiable at compile and bundle time.

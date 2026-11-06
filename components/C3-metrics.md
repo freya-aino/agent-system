@@ -3,11 +3,11 @@
 Programmatic metric library over traces. Depends only on `contracts/` (unit, trace-event, hash, types; store for persistence of results).
 
 ## Purpose
-Turn Traces (and checker outputs) into **fitness distributions** for Cells, Microbes and Substrates; compare candidates fairly; decide quality floors, Pareto fronts and right-sizing; and make metric gaming hard. Used by S1 for selection and by S2 for monitoring (same library, content-free inputs only in S2).
+Turn Traces (and checker outputs) into **fitness distributions** for Nodes, Agents and Swarms; compare candidates fairly; decide quality floors, Pareto fronts and right-sizing; and make metric gaming hard. Used by S1 for selection and by S2 for monitoring (same library, content-free inputs only in S2).
 
 ## Owned data
 - **MetricDef** (hashed per hash.md; `MetricRef` = HashId of a MetricDef per types.md, and is what `Unit.metrics: [MetricRef]` points at; this component owns the MetricDef shape):
-  `{ name, version, level: cell|microbe|substrate, inputs: trace-fields|checker-ids, aggregator, direction: max|min, kind: quality|cost|latency|robustness|size, code_primitives: [HashId], judge_units: [HashId]?, calibration_ref: HashId?, hash_spec }`.
+  `{ name, version, level: node|agent|swarm, inputs: trace-fields|checker-ids, aggregator, direction: max|min, kind: quality|cost|latency|robustness|size, code_primitives: [HashId], judge_units: [HashId]?, calibration_ref: HashId?, hash_spec }`.
   Any change to code, aggregator, checker set or judge Unit = new hash = new metric. Metrics are Merkle-linked to their judge Units.
 - **MetricSuite**: component-level, hashed grouping that is lowered into the contract `Evaluation` (types.md): ordered MetricRefs, a `ConstraintSet` (= `FitnessSpec.constraints`/`quality_floor`), task-variant sets (`VariantRef.kind`: `train` (formerly `dev`), `held_out`, `perturbed`; plus `canary`, see gaps) and a seed policy.
 - **Checker**: pure, hashed code primitive `(task, output, trace) -> verdict` (exact match, schema validity, unit tests, programmatic verifier). Ground truth for calibration.
@@ -22,8 +22,8 @@ Out: `FitnessRecord`, `PairedComparison`, `ParetoSet`, `ConstraintVerdict`, `Rig
 - Quality: checker pass rate, graded checker scores, schema-valid rate, completion rate (`summary.completion == output`).
 - Cost/latency: `summary.tokens/cost/wall_ms`, p50/p95/p99 from spans (ttft_ms, gen_ms), retries, errors, hops, loop_iterations. Cost is the derived span cost, never self-reported.
 - Robustness: variance across seeds, worst-quantile quality, degradation under perturbed variants, limit-exhaustion rate.
-- Size: Unit complexity (nodes, members, prompt tokens, closure bytes) at cell/microbe/substrate level; Microbe/Substrate metrics aggregate children's per-node span attribution (`Span.node_run`, `unit`).
-- Level semantics: a cell metric is computed on spans of that Unit; a microbe/substrate metric on whole-run Traces. Cross-level aggregation is only via declared aggregators.
+- Size: Unit complexity (nodes, members, prompt tokens, closure bytes) at node/agent/swarm level; Agent/Swarm metrics aggregate children's per-node span attribution (`Span.node_run`, `unit`).
+- Level semantics: a node metric is computed on spans of that Unit; an agent/swarm metric on whole-run Traces. Cross-level aggregation is only via declared aggregators.
 
 ## Interfaces
 - `evaluate(unit, suite, seeds, variants) -> FitnessRecord`  (traces are produced elsewhere; C3 consumes them. `evaluate_from_traces(traces, suite)` is the pure core.)
@@ -37,7 +37,7 @@ Out: `FitnessRecord`, `PairedComparison`, `ParetoSet`, `ConstraintVerdict`, `Rig
 - `monitor(content_free_summaries, window) -> DistributionShiftSignal` for S2 (summary-level metrics only; no payload needed).
 
 ## Right-sizing
-A candidate is right-sized iff (1) **floor**: the quality distribution satisfies the quality floor from the ConstraintSet; (2) **non-inferiority** vs each named baseline (frozen incumbent, simpler ancestor, a trivial/single-Cell baseline, and a larger "ceiling" reference): lower CI bound of paired quality difference > -margin (margin declared in policy, hashed); then (3) among passing candidates, **minimise** size and cost (Pareto over size, cost, latency). A bigger candidate must show superiority beyond margin to be preferred. Failing the trivial baseline's non-inferiority in the other direction (trivial baseline is within margin of candidate) yields verdict `oversized`.
+A candidate is right-sized iff (1) **floor**: the quality distribution satisfies the quality floor from the ConstraintSet; (2) **non-inferiority** vs each named baseline (frozen incumbent, simpler ancestor, a trivial/single-Node baseline, and a larger "ceiling" reference): lower CI bound of paired quality difference > -margin (margin declared in policy, hashed); then (3) among passing candidates, **minimise** size and cost (Pareto over size, cost, latency). A bigger candidate must show superiority beyond margin to be preferred. Failing the trivial baseline's non-inferiority in the other direction (trivial baseline is within margin of candidate) yields verdict `oversized`.
 
 ## Fairness and statistics
 - Shared seeds: all candidates in a comparison run on identical (task, seed) pairs; seeds drawn from a recorded seed policy; seed set is part of the FitnessRecord (`Distribution.seeds`).
@@ -48,21 +48,21 @@ A candidate is right-sized iff (1) **floor**: the quality distribution satisfies
 - Every FitnessRecord is keyed by `(unit, MetricRef, evaluation)`. `compare`, `pareto`, `right_size` refuse inputs with different metric hashes (`MetricVersionMismatch`). No automatic conversion. A metric upgrade requires re-evaluating the archive (or the subset needed) under the new hash; old records remain, tagged with their hash.
 - Checker, aggregator and judge Unit hashes are inside the MetricDef hash.
 
-## Judge / adversary / comparator Microbes
+## Judge / adversary / comparator Agents
 - Allowed as members of a MetricDef (`judge_units`), built from the same primitives, with hashed `role` `judge` / `adversary` / `comparator` / `auxiliary`; their outputs are **consumed only through a typed programmatic parser** (schema-validated score/verdict; parse failure = typed negative signal, never a default). They run in the S1 inbound zone only; a metric using one is flagged `judge_assisted` in every record it produces and in every Pareto/verdict output derived from it.
 - Their traces are normal Traces; their cost is charged to evaluation budget, not to the candidate.
 - Calibration: before use, and periodically, agree with a programmatic ground-truth Checker on a labelled sample (Cohen's kappa / AUROC / calibration curve with CI). Below threshold, metric is `uncalibrated` and cannot gate promotion (may rank within the funnel only if policy allows). Judge model pin change = new Unit hash = new metric = recalibrate.
 - Rule: a judge-assisted metric may never be the sole gate; at least one checker-based quality metric must also pass. Judge position/self-preference bias controlled by order swapping and judge-model != subject-model where possible.
 
 ## Protections against gaming
-- **Held-out and perturbed variants**: suites partition tasks into dev/`train` (visible to Breeder), held-out (`VariantRef.kind: held_out`; visible only to gates, rotated, access-counted), perturbed (paraphrase, format, distractor, order, injected noise, schema-preserving mutations), and canaries. Gap(dev, held_out) and gap(clean, perturbed) are first-class robustness metrics; large gap => `overfit` flag.
-- **Adversarial checks on metrics**: `audit_metric` runs degenerate outputs (empty, copy-input, always-"yes", verbose padding, hidden-format exploits, known-wrong-but-plausible) through the metric; a metric that scores any of them above its floor is `exploitable` and cannot gate. Adversary Microbes may generate attack candidates; results are fixed into the audit set by hash.
+- **Held-out and perturbed variants**: suites partition tasks into dev/`train` (visible to Meta-Optimizer), held-out (`VariantRef.kind: held_out`; visible only to gates, rotated, access-counted), perturbed (paraphrase, format, distractor, order, injected noise, schema-preserving mutations), and canaries. Gap(dev, held_out) and gap(clean, perturbed) are first-class robustness metrics; large gap => `overfit` flag.
+- **Adversarial checks on metrics**: `audit_metric` runs degenerate outputs (empty, copy-input, always-"yes", verbose padding, hidden-format exploits, known-wrong-but-plausible) through the metric; a metric that scores any of them above its floor is `exploitable` and cannot gate. Adversary Agents may generate attack candidates; results are fixed into the audit set by hash.
 - **Verifier-gaming detection**: signs include candidate outputs that pass the checker but fail an independent second checker; improvement concentrated in few tasks; suspicious span patterns (output produced with no corresponding tool/model spans, checker-specific strings, retries tuned to checker, tests deleted/edited); score jumps unrelated to cost/hops change; held-out stagnation while dev rises. Alerts are Events with evidence, may quarantine-suggest; never silently drop.
 - Metric/ground-truth separation: the Unit under test never receives the checker code or held-out content (inbound zone isolation is enforced by the runtime; C3 only specifies that checkers are hashed separately and not part of the subject's closure).
 - Goodhart guard: periodic reshuffle of held-out slices; hashed record of each reveal.
 
 ## Invariants
-- No metric input is LLM-scored except via flagged, calibrated, parsed judge Microbes; nothing in a Trace is trusted as a score.
+- No metric input is LLM-scored except via flagged, calibrated, parsed judge Agents; nothing in a Trace is trusted as a score.
 - Metric computation is a pure function of its hashed inputs (traces, checker verdicts, MetricDef); recompute gives the same result.
 - Comparisons only within identical metric hash + suite + seed set.
 - `no_sample` traces contribute only content-free metrics; payload-dependent checkers mark them `not_evaluable` (recorded as verdict `na`), never zero.

@@ -66,7 +66,7 @@ Planner:
 - If no generalist is available the router returns a typed error (`no_route`), which is logged and not retried with random choice.
 
 ## Training (S1) vs serving (S2)
-- S1: priors computed from offline evaluation per (member, region); router variants bred like other Units; reward for a router is system-level (task completion distribution, cost, latency, probe overhead) on held-out prompt streams including adversarial and out-of-distribution prompts. Region maps are re-fit on new encoder versions, which changes the hash.
+- S1: priors computed from offline evaluation per (member, region); router variants evolved like other Units; reward for a router is system-level (task completion distribution, cost, latency, probe overhead) on held-out prompt streams including adversarial and out-of-distribution prompts. Region maps are re-fit on new encoder versions, which changes the hash.
 - S2: loads router Unit and `Priors` from the bundle; `select`, `probe`, `plan` only.
 - Encoder change or priors refresh = new router hash = full promotion path.
 
