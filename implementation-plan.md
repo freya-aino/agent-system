@@ -6,7 +6,7 @@ Goal: one working vertical slice end to end, then widen. Spec order rule stays: 
 ```
 crates/
   contracts/    types from specs/contracts/ (serde types, canonical encoding trait)   no deps on others
-  core/         canonical encoding + blake3 hash, JSON-Schema subset + Subsumes, seeded RNG, stats (Distribution)
+  core/         canonical encoding + SHA-256 hash, JSON-Schema subset + Subsumes, seeded RNG, stats (Distribution)
   library/      C1: primitives, Cell, Microbe, graph validate/compile, slot fit, standalone runner
   runtime/      C2: scheduler, limits, trace emission, driver trait + process driver
   driver-fc/    Firecracker driver (jailer, snapshot/restore, vsock), Linux only

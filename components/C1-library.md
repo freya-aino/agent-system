@@ -8,14 +8,14 @@ An SDK for declaring, validating and compiling agent workflows. Works **standalo
 ## Owned data
 - **Primitive**: the hashable leaf. Kinds: `prompt`, `model` (pinned id + sampling params; price comes from `PriceTable` at run time, unit.md `model: ModelRef`), `code` (pure function, declared capabilities), `tool` (read-only), `skill`, `guard` (pure predicate over channels), `reducer` (pure merge fn), `schema`, `memory_policy`, `connector_binding` (name + pinned version, never data), `policy` (Limits). Code primitives (guards, reducers, hooks) are the `adapter` entries of a Unit; `model`, `memory_policy` and `connector_binding` primitives fill the Unit's `model`, `memory` and `connectors` fields. Identity = hash (when hashing is on).
 - **Cell** (Unit level 1): one small step per invocation, no internal loop. `kind` in `cell/transform | cell/stateful | cell/store-read`. Interface: exactly one input port, one output port.
-- **Microbe** (Unit level 2): a `Graph` of nodes (Cells or nested Microbes), edges with guards, else/fanout/join and loop bounds, `NodeSpec` port bindings, channels with reducers, entry/exit, Limits.
+- **Microbe** (Unit level 2): a `Graph` of Cell nodes (no nested Microbes), edges with guards, else/fanout/join and loop bounds, `NodeSpec` port bindings, channels with reducers, entry/exit, Limits.
 - **Registry** (local, in-process): name/hash → Primitive/Unit, for closure resolution. Persistence of it is out of scope (C4 may back it; library only needs a `resolve(HashId) -> bytes` hook).
 - **CompiledUnit**: deterministic, serialisable lowering of a Unit plus its resolved closure, the static analysis report (bounds, schema-flow), and an `unhashed` flag in standalone mode.
 
 ## Inputs / Outputs
 - In: Unit / Primitive declarations (builder API or canonical serialised form), a registry resolver.
 - Out: `Unit` (contract shape, with `hash` if hashing enabled), `CompiledUnit`, `ValidationReport { errors:[Diagnostic], warnings, bounds }`.
-- `bounds` = derived worst case: max hops, max loop iterations, max tokens/cost (sum of member `Limits`, bounded by Unit `policy`), max nesting depth.
+- `bounds` = derived worst case: max hops, max loop iterations, max tokens/cost (sum of member `Limits`, bounded by Unit `policy`). 
 
 ## Cell classes
 | Class | Behaviour | Constraint |
@@ -27,7 +27,7 @@ An SDK for declaring, validating and compiling agent workflows. Works **standalo
 There is **no store-write class.** Allowed data surfaces: (1) task-scoped memory buffer (read/write, bounded size via `memory_policy`), (2) read-only pinned workspace snapshot (`workspace_ref`), (3) read-only versioned knowledge connectors. `code` primitives declare capabilities; only `connector:<name>` (read) and `memory`/`workspace:read` exist; no network, no filesystem write.
 
 ## Graph semantics (Microbe)
-- **Nodes** run a member by `Slot`; a node that is a Microbe is a **subgraph**: its entry/exit ports map to the parent's channels via the node's `NodeSpec.ports` (`PortBindings`). Nesting is acyclic by hash (a Unit cannot contain itself) and depth is bounded by `max_hops`.
+- **Nodes** run a Cell member by `Slot`; its ports map to edges or channels via the node's `NodeSpec.ports` (`PortBindings`). **No nesting**: a Microbe is never a node of another Microbe (compile error); Microbes interact only inside a Substrate.
 - **Channels**: typed (`schema`), task-scoped, each with a declared pure `reducer` (builtin `last`, `append`, `sum`, `merge`, or custom hashed code). Concurrent writes within one step are merged by the reducer; a reducer must be associative+commutative or declare `ordered` (then ordering is by happens-before then NodeId).
 - **Edges**: `from → to`, optional `guard` (pure predicate over channels, evaluated once the source completes), optional `loop_bound`. Multiple outgoing edges: all true guards fire, bounded by the edge `fanout` (`one`, `all`, `{max}`) and `Limits.max_fanout`; an `else_` edge fires when none do. A node with several incoming edges waits per the edge `join` mode (`all`, `any`, `reduce`).
 - **Cycles**: every strongly connected component must contain an edge with `loop_bound`; the bound counts traversals per task. Exceeding it is a typed `limit_exhausted` outcome at runtime, never an error in the library.

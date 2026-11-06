@@ -1,7 +1,7 @@
 # 07 — Substrate (Environment)
 
 ## Purpose
-A time-based simulation of how a group of Microbes behaves inside a code framework. Where Cells produce inputs/outputs and Microbes produce execution patterns and control flow, the Substrate **produces metrics and guides macro-level communication between Microbes**. It is the place where primary evaluation happens. Everything a Substrate needs as environment control belongs to evaluation, competition, cleaning or testing (provided by roles such as ribosomes and viruses, spec 09).
+A time-based simulation of how a group of Microbes behaves inside a code framework. Where Cells produce inputs/outputs and Microbes produce execution patterns and control flow, the Substrate **produces metrics and guides macro-level communication between Microbes**. It is the place where primary evaluation happens. Everything a Substrate needs as environment control belongs to evaluation, competition, cleaning or testing (provided by roles such as `judge` and `adversary`, spec 09).
 
 It behaves like a service: it is connected to the outside via *advertised services* (database connector, web docs, ...) and simulates the surroundings in which, e.g., an MCP server would sit.
 
@@ -81,7 +81,7 @@ Two separate systems, both built from the same SubstrateSpec format:
 | **Outbound** | Runtime execution: deployed Substrates serving the outside world | Locked: specs are immutable, changed only by promotion (spec 13) |
 | **Inbound** | Isolated experiment Substrates | Owned by Nature; sandboxed, no path to outbound |
 
-Every Substrate (either segment) must satisfy the **service requirements**: it can be bound to an agent protocol (MCP, A2A, ACP) or to OpenAI-API-compatible endpoints (chat, document upload, etc.). The protocol binding is declared in the spec (`services`/`routing`) and implemented by the adapters in spec 14.
+Every Substrate (either segment) must satisfy the **service requirements**: it can be bound to an agent protocol (MCP, A2A) or optionally to OpenAI-API-compatible endpoints (chat, document upload, etc.). The protocol binding is declared in the spec (`services`/`routing`) and implemented by the adapters in spec 14.
 
 ## Non-interactive regions (resolved)
 A Substrate may contain regions where Microbes do not talk directly: separating different advertised functions, or sharing data (e.g. a shared store) without direct messaging. `routing` therefore supports `channel` (direct) and `shared-data` (indirect) links, plus isolation boundaries.
@@ -90,7 +90,7 @@ A Substrate may contain regions where Microbes do not talk directly: separating 
 Metrics are produced at all three levels (Cell, Microbe, Substrate) and Substrate-level metrics may be code-defined and library-managed. See spec 08.
 
 ## Inter-microbe transport (resolved)
-Inside a Substrate, Microbes communicate over a fast binary transport (gRPC by default), while remaining MCP/ACP-initialisable and with descriptors published MCP/ACP-style (spec 15). The transport is declared in `routing` and is part of the Substrate hash.
+Inside a Substrate, Microbes communicate over a fast binary transport (gRPC by default), while remaining MCP/A2A-initialisable and with descriptors published MCP/A2A-style (spec 15). The transport is declared in `routing` and is part of the Substrate hash.
 
 ## Connectors (resolved)
 Substrates reach the outside only through **live connectors**; there are no replayed or mocked services as a first-class concept. Two connector types:

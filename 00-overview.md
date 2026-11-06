@@ -33,10 +33,11 @@ Every layer is a **Unit** (spec 01), adapted per level with custom logic: layers
 | Runtime | Sandbox in which instances execute | 06 |
 | Substrate (= Environment) | Level-3 Unit; parameterised time-based simulation | 07 |
 | Metrics / Fitness | Per-level metrics; distribution of scores | 08 |
-| Lineage | Ancestry line of Units at any level; Microbe base-types (bacteria, ribosome, virus) each form their own independent lineages; roles are tags | 09 |
+| Lineage | Ancestry line of Units at any level, recorded as genealogy in the store (not in the Unit); each Microbe base-type forms its own independent lineages | 09, 10 |
 | Store | Content-addressed storage + genealogy graph | 10 |
 | Pool | Bounded, reward-ranked set of current best Units per level/base-type; manages interface surface vs. compatibility | 11 |
-| Base-type | Microbe class (bacteria, ribosome, virus) with its own adapter, fitness and independent evolution | 09 |
+| Base-type | Microbe family (free `base_type` string) with its own adapter, fitness and independent evolution | 09 |
+| Role | Hashed function of a Unit: `subject`, `auxiliary`, `judge`, `comparator`, `adversary`, `router`, `none` | 09 |
 | Nature | Layer-4 evolutionary loop | 12 |
 | Breeder | Layer-5 RL stage | 13 |
 | Test zone (inbound) / Deployment (outbound) | Isolated experiment Substrates vs locked runtime Substrates | 14, 15 |
@@ -56,9 +57,10 @@ Every layer is a **Unit** (spec 01), adapted per level with custom logic: layers
 01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10 → 11 → 12 → 13 → 14 → 15 → 16 (observability) → 17 (roadmap). Each spec depends only on lower-numbered ones.
 
 ## Open questions
-- Evaluator = "ribosome", adversary = "virus": nicknames or formal terms?
+- None at overview level.
 
 ## Decisions (resolved)
 - Everything gets a hash identity where possible, including Nature and the Breeder (levels 4 and 5 of the Unit model) and their learned parameters.
+- Role names follow the contracts (`judge`, `comparator`, `adversary`, ...); the earlier nicknames "ribosome" (evaluator) and "virus" (adversary) are dropped.
 - Level 2 was renamed from "Organism" to "Microbe" (bacteria-scale: one complex function made of several Cell steps).
 - Layer 4 is **Nature** (natural selection), layer 5 is the **Breeder** (RL planner steering which lines to breed). `specs/README.md` maps each layer to the kind of AI system it is.

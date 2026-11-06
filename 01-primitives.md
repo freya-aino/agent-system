@@ -14,24 +14,24 @@ Unit {
                                  //   + workload + metric refs
   interface: { inputs, outputs } // L1: exactly 1/1; L2: entry/exit points;
                                  //   L3: advertised services + protocol bindings
-  relation:  structure among members  // L1: none (set); L2: topology + schedule;
+  relation:  structure among members  // L1: none (set); L2: graph of Cells (bounded cycles) + schedule;
                                  //   L3: routing (direct | shared-data | isolated)
   policy:    HashId              // limits: L1 tokens/time; L2 energy (hops), total budget;
                                  //   L3 horizon, run budget
   metrics:   [MetricRef]         // level-appropriate metrics from the library (spec 08)
   adapter:   [HashId]            // level-specific custom logic (code primitives):
                                  //   compile / instantiate / run / collect hooks
-  parent:    HashId?             // ancestry: the Unit this was varied from (same level)
-  tags:      set<string>         // role: subject, auxiliary, evaluator, adversary
+  role:      subject | auxiliary | judge | comparator | adversary | router | none   // HASHED
+  labels:    set<string>         // free labels, NOT hashed
   hash:      HashId              // spec 02
 }
 ```
 
 Common lifecycle and operations, identical at every level:
-`validate → compile → instantiate(seed) → run → collect metrics → vary (new Unit with parent)`.
+`validate → compile → instantiate(seed) → run → collect metrics → vary (new Unit + genealogy link in the store)`.
 What differs per level is only the `adapter` logic and the schemas of `members`, `interface` and `relation`.
 
-Ancestry applies at every level: Cells, Microbes and Substrates all form **lineages** via `parent`. A "general-purpose" Microbe (evaluator, adversary, ...) is simply a lineage whose Units carry a function tag; there is no separate mechanism.
+Ancestry applies at every level: Cells, Microbes and Substrates all form **lineages**. Ancestry is **not a Unit field**: every Unit is immutable, and each variation appends a genealogy link (child, parents, provenance) to the store (spec 10), so lineages are derived from immutable prior records. A "general-purpose" Microbe (judge, comparator, adversary, ...) is simply a lineage whose Units carry that hashed `role`; there is no separate mechanism.
 
 Levels 4 and 5 (Nature, Breeder) are Units too: `members` = algorithm code + hyperparameters + learned parameters (each hashed), `interface` = the operations in specs 12 and 13, `adapter` = the algorithm logic. A Breeder run therefore has a reproducible identity, and Breeders can themselves be varied, compared and given lineages.
 

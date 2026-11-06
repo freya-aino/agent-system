@@ -3,13 +3,13 @@
 ## Purpose
 A functional unit built from Cells plus communication primitives: one complex function (tool use, extraction, formatting, processing...) realised by several Cell steps. This is the unit that is evaluated, evolved, promoted and deployed as an advertised function.
 
-This is the **level-2 Unit** (spec 01): `members` = Cells (by role) + comm primitives, `relation` = an internal **DAG** of Cell executions, `interface` = entry/exit points, `policy` includes the energy (hop) budget. Microbes have base-types (bacteria, ribosome, virus; spec 09), which are adapter families of the same Unit.
+This is the **level-2 Unit** (spec 01): `members` = Cells (by role) + comm primitives, `relation` = an internal **graph** of Cell executions with guarded edges and **bounded cycles** (contract `Graph`, unit.md), `interface` = entry/exit points, `policy` includes the energy (hop) budget. Microbes have base-types (spec 09), which are adapter families of the same Unit.
 
 ## Functional range
 Biology-inspired naming: this level is bacteria-scale, hence **Microbe**. A Microbe does **one thing that is complex enough to need several Cell steps**: function calls, individual tools, formatting, processing, extraction and so on, chained together. It is smaller than a whole multi-agent application; larger systems arise in the Substrate (spec 07) by hosting several Microbes together.
 
 ## Advertised functions and task boundaries
-A Microbe's entry points are **advertised functions**, described like an MCP tool descriptor, ACP-style advertised function or agent skill:
+A Microbe's entry points are **advertised functions**, described like an MCP tool descriptor or A2A skill:
 ```
 FunctionDescriptor {
   name, description
@@ -19,10 +19,10 @@ FunctionDescriptor {
   scope:       invocation (default) | session
 }
 ```
-**The Microbe defines where its tasks end**: a task is one invocation of an advertised function, from the entry event to its completion event. Internal storage (spec 04/07) lives for exactly that span. The Substrate's advertised services (spec 07) are built from these descriptors and bound to MCP / A2A / ACP / OpenAI-compatible endpoints (spec 15).
+**The Microbe defines where its tasks end**: a task is one invocation of an advertised function, from the entry event to its completion event. Internal storage (spec 04/07) lives for exactly that span. The Substrate's advertised services (spec 07) are built from these descriptors and bound to MCP / A2A (or optional OpenAI-compatible) endpoints (spec 15).
 
 ## Presentation and documentation
-- **Stage labels**: each DAG node may carry a user-facing label ("thinking", "searching law database", "summing up"). They are used to stream the execution graph of a request in live systems (spec 15) and live in the Microbe's **presentation record**.
+- **Stage labels**: each graph node may carry a user-facing label ("thinking", "searching law database", "summing up"). They are used to stream the execution graph of a request in live systems (spec 15) and live in the Microbe's **presentation record**.
 - **README.md**: every Microbe (and Cell) gets a README that documents its function, schemas, Cells used, policy limits, fitness kind and evaluation method, so that agents can replicate the structure when inventing new ones (`authoring/README.md`).
 - Both are content-addressed and linked to the Unit but excluded from the behaviour hash (spec 02).
 
@@ -38,8 +38,8 @@ A Microbe may be built by **integrating an existing system**, e.g. an MCP server
 MicrobeSpec {
   cells:     map<Role, CellSpecHash>
   comm:      [CommPrimitive]       // see below
-  topology:  DAG                   // nodes = roles, edges = comm channels; acyclic
-  schedule:  ScheduleRule          // derived programmatically from the DAG: order, parallelism, termination
+  topology:  Graph                 // nodes = Cells by slot; edges with guards, fanout/join, loop_bound; typed channels with reducers (unit.md)
+  schedule:  ScheduleRule          // derived programmatically from the graph: causal-frontier order, parallelism, termination
   io: {
     inputs:  [EntryPoint]          // role + schema
     outputs: [ExitPoint]
@@ -59,14 +59,14 @@ CommPrimitive {
 
 ## Semantics
 - Cells are black boxes with one input / one output; the comm primitive adapts the output of one to the input of another.
-- Ordering lives here: the Microbe **decides programmatically**, from its internal DAG, the sequence of Cell executions. Independent branches run in parallel (spec 06); fan-out/fan-in and pipelines are DAG shapes.
-- **Revision loops** are allowed inside a Microbe as bounded iteration (declared maximum iterations, part of the hash) on top of the acyclic base DAG. They are not forbidden but self-limiting: long-running loops grow token usage quickly and degrade fitness (spec 08), so selection keeps them short.
-- Termination is guaranteed by the declared loop bounds plus the global budget of every Microbe (energy/hops, tokens).
-- Construction can fail: invalid DAGs, interface mismatches (spec 11 slot fit) and runtime errors are expected during sampling and are handled by Nature as recorded outcomes (spec 12).
+- Ordering lives here: the Microbe **decides programmatically**, from its internal graph, the sequence of Cell executions. Independent branches run in parallel (spec 06); fan-out/fan-in, pipelines and guarded branches (with `else`) are graph shapes.
+- **Cycles are allowed when bounded**: every strongly connected component must contain an edge with a declared `loop_bound` (part of the hash). Loops are self-limiting: long-running loops grow token usage quickly and degrade fitness (spec 08), so selection keeps them short.
+- Termination is guaranteed by the loop bounds plus the global budget of every Microbe (energy/hops, tokens, `max_loop_iterations`).
+- Construction can fail: invalid graphs (unbounded cycles, unreachable nodes), interface mismatches (spec 11 slot fit) and runtime errors are expected during sampling and are handled by Nature as recorded outcomes (spec 12).
 - Microbe hash includes topology and schedule (spec 02).
 
 ## Interfaces
-- `compile(spec) -> bundle | errors` (checks I/O schema compatibility along every channel, acyclicity of the base DAG, and that every revision loop is bounded)
+- `compile(spec) -> bundle | errors` (checks I/O schema compatibility along every edge and channel, reachability of entry/exit, and that every cycle is bounded)
 - `instantiate(bundle, seed) -> MicrobeInstance`
 - `run(instance, input) -> output + trace`
 
@@ -85,7 +85,7 @@ CommPrimitive {
 ## Decisions (resolved, continued)
 - A Microbe may advertise several functions sharing one Cell graph (different entry points); each function counts as its own task for metrics.
 - **One endpoint per function** when the Microbe is exposed (spec 15).
-- The execution structure is an internal DAG, sequenced programmatically, with bounded revision loops allowed; their token cost is the selection pressure against excess iteration.
+- The execution structure is an internal graph with bounded cycles, sequenced programmatically; token cost is the selection pressure against excess iteration.
 
 ## Open questions (continued)
 - Is there a canonical set of schedule modes (sync pipeline, event-driven, periodic) or free-form?

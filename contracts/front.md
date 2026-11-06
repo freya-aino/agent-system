@@ -1,6 +1,6 @@
 # Contract: Front (request/response)
 
-The protocol-neutral request shape used by S2's front and S1's inbound test front. Protocol adapters (MCP, A2A, ACP, OpenAI-compatible) translate to and from it and hold no business logic.
+The protocol-neutral request shape used by S2's front and S1's inbound test front. Protocol adapters (MCP, A2A, optional OpenAI-compatible) translate to and from it and hold no business logic.
 
 ```
 TaskRequest {

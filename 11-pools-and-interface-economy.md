@@ -6,8 +6,8 @@ Units at every level are kept in **pools**: finite, reward-ranked sets of the cu
 ## Pools
 - A **pool** is a bounded set of committed Units of one level (and, at level 2, one base-type, spec 09), ordered by current reward. Admission and eviction follow reward and the size cap; evicted Units stay in the store.
 - Cells, Microbes and Substrates are pooled by the **same algorithmic organisation**; only the interface notion differs by level.
-- The **Cell pool is shared by all base-types**: ribosomes are built from the same Cells as the Microbes they evaluate (spec 09). Microbe pools are kept per base-type.
-- A Cell's reward combines its **internal fitness** (spec 04/08) where it has a meaningful one (e.g. model-bound Cells) with its **contribution** to the Microbes using it (measured by ribosome evaluation). Contribution-only Cells (e.g. trivial deterministic code) are ranked by contribution alone.
+- The **Cell pool is shared by all base-types**: judge Microbes are built from the same Cells as the Microbes they evaluate (spec 09). Microbe pools are kept per base-type.
+- A Cell's reward combines its **internal fitness** (spec 04/08) where it has a meaningful one (e.g. model-bound Cells) with its **contribution** to the Microbes using it (measured by judge evaluation). Contribution-only Cells (e.g. trivial deterministic code) are ranked by contribution alone.
 - Pools are the source for Nature's variation operators (Cell swap, recombination) and for the Breeder's action space.
 
 ## Interface surface and compatibility

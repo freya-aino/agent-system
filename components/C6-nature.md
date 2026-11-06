@@ -32,9 +32,9 @@ Quarantine: a Unit that crashes the runtime or breaches Limits repeatedly gets a
 ## Variation operators
 An operator is `Operator { name, version, level, signature: (parents, context) -> Unit, source }`, typed per level; it must emit a Unit that passes compile or an `OperatorError`.
 - **L1 Cell**: prompt edit, parameter change, adapter swap, schema-preserving rewrite, model-id swap among pinned ids.
-- **L2 Microbe**: add/remove/rewire node, edge guard change, loop_bound change, reducer swap, subgraph nest/unnest, member replacement by slot.
+- **L2 Microbe**: add/remove/rewire node, edge guard change, loop_bound change, reducer swap, member replacement by slot.
 - **L3 Substrate variation**: change which Microbes occupy which slots, add/drop Microbes, change shared connector bindings, mutate the Substrate's coordination graph and limits. Substrate edits are costly to evaluate, so they are gated behind a pre-screen on member evaluations already cached.
-- **Recombination (crossover)**: two or more parents, exchange members or subgraphs at a **slot**. Requires **slot fit**: donor member's interface must satisfy the slot's port schemas (computed by C5 slot fit; Nature calls it as "fit(slot, candidate) -> score|incompatible" and falls back to a local structural check if absent). Incompatible donors are skipped, not adapted silently; an optional adapter-insertion operator may be proposed as a separate mutation.
+- **Recombination (crossover)**: two or more parents, exchange members or sub-topologies (sets of Cell nodes and their edges) at a **slot**. Requires **slot fit**: donor member's interface must satisfy the slot's port schemas (computed by C5 slot fit; Nature calls it as "fit(slot, candidate) -> score|incompatible" and falls back to a local structural check if absent). Incompatible donors are skipped, not adapted silently; an optional adapter-insertion operator may be proposed as a separate mutation.
 - Each operator declares a `cost_class` (cheap/expensive) so the funnel can budget them.
 
 ### Programmatic or LLM-proposed (README decision, supersedes old spec 12)

@@ -8,7 +8,7 @@ Persist everything the system produces so that it can be compared, resampled and
 |--------|-----|-------|
 | Unit (levels 1–5) | unit hash | Immutable (spec 01/02) |
 | Leaf primitive | primitive hash | Via the registry (spec 03) |
-| Provenance record | record hash | `parent(s)`, variation operator, tags, author, reason, timestamps (spec 02: kept out of the Unit hash) |
+| Provenance record | record hash | `parents`, variation operator, author, reason, timestamps (spec 02: ancestry is not part of the Unit or its hash) |
 | Experiment | experiment hash | Substrate hash + role assignment + seeds (spec 07) |
 | RunResult | (experiment, seed) | Metrics per level (spec 08) |
 | Trace | run id | Events with causal edges; payloads stored as content-addressed blobs (spec 06) |
@@ -19,7 +19,7 @@ Persist everything the system produces so that it can be compared, resampled and
 All objects are immutable. Status (candidate, committed, promoted, retired, quarantined) is stored as **separate append-only status events**, not as a field of the object.
 
 ## Lineage graph
-- Nodes = Units; edges = `parent` links from provenance records, at every level. A graph per level plus cross-level edges (Microbe → the Cells it uses; Substrate → the Microbes it hosts).
+- Nodes = Units; edges = genealogy links (child → parents) with their provenance records, at every level. This is the only place ancestry exists; Units carry none. A graph per level plus cross-level edges (Microbe → the Cells it uses; Substrate → the Microbes it hosts).
 - Branching is implicit: two children of the same parent.
 - Recombination: a provenance record may list **several parents** (see open questions).
 - Every committed Unit belongs to a lineage identified by its root (spec 09).
@@ -39,13 +39,15 @@ The store is partitioned into **inbound** (experiments) and **outbound** (deploy
 ## Interfaces
 - `put(object) -> hash` (idempotent), `get(hash)`
 - `append_status(unit, status, reason, actor)`
-- `link(child, parents, operator, tags) -> provenance hash`
+- `link(child, parents, provenance) -> provenance hash`
 - queries above
 
 ## Depends on
 01–09.
 
+## Decisions (resolved)
+- Ancestry lives only in the store genealogy; a link may list several parents (recombination); lineage root follows the first parent.
+
 ## Open questions
-- Recombination: single `parent` in the Unit model vs. list of parents in the provenance record. Proposed: provenance records hold a list; lineage root follows the first parent.
 - Retention: keep every trace payload forever, or tier (full for frontier and baselines, summarised for the rest)?
 - Backing technology is implementation-level, but the spec requires: content-addressing, append-only, snapshot-consistent queries for experiments in progress.
