@@ -61,7 +61,7 @@ Microvm (Firecracker) driver requirements:
 **Fallbacks (Firecracker needs Linux/KVM; driver.md)**: `container` driver (gVisor/Kata-class runtime or hardened OCI with seccomp, read-only rootfs, no-new-privileges, user namespaces, network policy) and `process` driver (dev only: rlimits, separate uid, namespace where available). Each driver's `isolation_level` is written to startup logs and telemetry events; macOS/Windows/no-KVM hosts get `container` or `process`. The same bundle runs unchanged on all drivers; only guarantees differ.
 
 ## Protocol adapters
-`MCP`, `A2A`, `ACP`, `OpenAI-compatible`. Adapters translate only; no business logic (front.md). **Each `FunctionDescriptor` in the manifest is exposed as its own endpoint, tool, skill, or route** (MCP tool; A2A skill; ACP agent/run; OpenAI-compatible model/route, with document-taking functions on file endpoints).
+`MCP`, `A2A`, optional `OpenAI-compatible` (ACP dropped; folded into A2A). Adapters translate only; no business logic (front.md). **Each `FunctionDescriptor` in the manifest is exposed as its own endpoint, tool, skill, or route** (MCP tool; A2A skill; OpenAI-compatible model/route, with document-taking functions on file endpoints).
 ```
 ProtocolAdapter { name, version, describe(bundle)->descriptor, serve(listener, front), to_task(req)->TaskRequest (front.md), from_result(TaskResult)->response, authenticate(req)->caller }
 ```
@@ -126,4 +126,4 @@ bundle revocation (`RevocationFeed`, `revoke_bundle`, `revoke_key`), `trust_root
 - `manifest.rollout.plan` stages are `shadow|canary|active` only; `draining`, `retired` and `quarantined` deployment states have no contract definition.
 - `driver.md` has no provider-credential injection mechanism (egress proxy) beyond `EgressPolicy.allow`; `SandboxImage`, `Health`, `SnapshotRef` shapes are unspecified.
 - `SpanCF` and `TelemetryEnvelope` have no field for driver `isolation_level`, adapter name/version (field mappings are recorded per telemetry record here) or descriptor features; these ride in `events` with no defined schema.
-- Protocol adapter field mappings (MCP/A2A/ACP/OpenAI-compatible) are not specified by front.md beyond `protocol: {name, version}`.
+- Protocol adapter field mappings (MCP/A2A/OpenAI-compatible) are not specified by front.md beyond `protocol: {name, version}`.

@@ -3,7 +3,7 @@
 Small shared vocabulary used by every other contract. Canonical encoding and hashing: hash.md.
 
 ```
-HashId     = "b3:<hex>"                         // hash.md
+HashId     = "sha256:<hex>"                         // hash.md
 SchemaRef  = HashId of a JSON-Schema document   // source of truth for all I/O
 Subsumes(a: SchemaRef, b: SchemaRef) -> bool    // a accepts everything b produces (structural, JSON-Schema subset; conservative: unknown => false)
 Slot       = string                             // named member position in a Unit

@@ -40,7 +40,7 @@ A Cell's exposed schema is its **surface** for a function. Cells live in pools (
 `compile(CellSpec) -> CompiledCell`: resolve closure from registry, validate schema compatibility, check that exactly one model config and one entry exist, check that policy limits are present, produce a deterministic bundle. Compilation is pure: same spec ⇒ same bundle.
 
 ## Lifecycle
-`created → running → (done | failed)`; a Cell never mutates its spec. Evolution creates a *new* spec with a new hash and a `parent` link (spec 10).
+`created → running → (done | failed)`; a Cell never mutates its spec. Evolution creates a *new* spec with a new hash and a genealogy link in the store (spec 10).
 
 ## Interfaces
 - `compile(spec) -> bundle | errors`

@@ -14,7 +14,7 @@ Adding one needs a spec change. Exceeding 30 needs owner approval first. Propose
 | 8 | tokio-rustls | async TLS |
 | 9 | serde | derive for contract types |
 | 10 | serde_json | JSON (schemas, wire formats) |
-| 11 | blake3 | canonical hash |
+| 11 | sha2 | canonical hash (SHA-256, hash.md) |
 | 12 | ed25519-dalek | bundle and telemetry signatures |
 | 13 | tokio-postgres | event log, leases, queue |
 | 14 | postgres-types | Postgres type mapping |

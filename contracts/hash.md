@@ -1,6 +1,6 @@
 # Contract: Canonical Hashing
 
-`HashId` = algorithm tag + digest (default `blake3-256`), canonical string form `b3:<hex>`.
+`HashId` = algorithm tag + digest (default `SHA-256`), canonical string form `sha256:<hex>`. The algorithm prefix allows migration; one algorithm is fixed per `hash_spec` version.
 
 ## Rules
 - Hash input is a **canonical encoding** of the value: deterministic key order, decimals as strings or fixed-point, UTF-8 NFC strings, no insignificant whitespace. Manifests for signing use the same encoding.

@@ -52,4 +52,4 @@ Effects: the front stops routing to the scope (spec 15), the deployment moves to
 ## Open questions
 - Export format: an OpenTelemetry-compatible export of traces and metrics for external tooling (proposed), keeping the content-addressed store as the source of truth?
 - Retention tiers for trace payloads (full for frontier and baselines and deployed Units, summarised for the rest).
-- Live evaluation of deployed Units: how are ribosome scores obtained on live traffic when `no_sample` requests carry no content (only content-free metrics and sampled requests)?
+- Live evaluation of deployed Units: how are judge scores obtained on live traffic when `no_sample` requests carry no content (only content-free metrics and sampled requests)?

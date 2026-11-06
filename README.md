@@ -19,13 +19,13 @@ A biology-inspired, continuously evolving agent framework. Agents are hashable d
 ## Decisions carried in
 - Prod is **select-only**: S2 routes to locked lineage members; nothing mutates in prod.
 - **No external writes.** Task-scoped memory buffer only; persistence = read-only pinned workspace snapshot + read-only versioned knowledge stores.
-- Graph rules: guarded edges, bounded cycles, typed state channels with reducers, Microbe nesting as subgraphs; all statically checkable and bounded.
+- Graph rules: guarded edges, bounded cycles, typed state channels with reducers, no Microbe nesting (Microbes interact only in a Substrate); all statically checkable and bounded.
 - Router/planner is an evolvable Microbe lineage using task-class priors + cheap probes.
 - Handoff is **pull-based signed bundles**; telemetry is one-way and content-free. S1 has no write path into S2.
 - Nature/Breeder state is sharded by population, one writer per shard; run workers are stateless.
 
 ## Stack
-See `stack.md`: Rust workspace, devenv, Firecracker, S3 + Postgres (+ HelixDB candidate), MCP/A2A over HTTP, docker compose for test/dev/simulation.
+See `stack.md`: Rust workspace, SHA-256 hashing, devenv, Firecracker, S3 + Postgres (+ HelixDB candidate), MCP/A2A over HTTP, docker compose for test/dev/simulation.
 
 ## Contracts (`contracts/`)
 `types.md` (shared vocabulary), `unit.md`, `hash.md`, `trace-event.md`, `store.md`, `bundle.md`, `task-class.md`, `driver.md` (isolation driver), `front.md` (request/response), `telemetry.md` (the only S2↔S1 channels: push-only content-free telemetry out, pull-only bundles and revocation in).

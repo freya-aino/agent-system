@@ -3,7 +3,7 @@
 ## Purpose
 Define what is measured at every level, how metrics are produced and stored, and how they are aggregated into fitness for Nature (spec 12).
 
-Metrics follow the Unit model (spec 01): every level has a `metrics` field; "lineage" means the ancestry line (via `parent`) of Units at any level, so baselines are "committed ancestors in the same lineage".
+Metrics follow the Unit model (spec 01): every level has a `metrics` field; "lineage" means the ancestry line (store genealogy, spec 10) of Units at any level, so baselines are "committed ancestors in the same lineage".
 
 ## Metric levels
 
@@ -27,7 +27,7 @@ Library entries are hashed and versioned like primitives (spec 01/03 style):
 MetricSpec {
   name, version, level: cell | microbe | substrate
   inputs:     trace selectors / required roles
-  impl:       code reference (hash) or evaluator-Microbe assignment
+  impl:       code reference (hash) or judge-Microbe assignment
   output:     scalar | vector | distribution, with direction (higher/lower better)
   applies_to: [SubstrateSpec kinds / protocol bindings]
   hash:       HashId
@@ -50,7 +50,7 @@ Each metric declares which Substrate kinds it maps to; a Substrate selects metri
 04, 05, 06, 07.
 
 ## Decisions (resolved)
-- **Evaluator Microbes**: the evaluator's hash is recorded in every metric result it produces, and evaluators are periodically checked by adversarial Microbes (spec 09).
+- **Judge Microbes** (`role: judge`/`comparator`): the judge's hash is recorded in every metric result it produces, judge-assisted results are flagged, and judges are periodically checked by adversary Microbes (spec 09).
 - **Normalisation across Substrate variations**: fitness is compared (a) between samples in the same experiment and (b) against a **selection of baseline Microbes** previously committed in the same ancestry line. Baselines are run in the same Substrate variation so the comparison is paired.
 - **Metric versioning**: results stay stored under the metric hash that produced them; results from different metric versions are never compared.
 - **Right-sizing**: the target is a system as small as possible without losing quality. Fitness therefore has two parts: a **quality floor** (non-inferiority against the baselines, within a tolerance set by the experiment) and **size/cost objectives** minimised under that floor. Size metrics (Level 2/3): `num_cells`, `num_connections`, total prompt tokens across Cells, `hops_used`/energy budget, `tokens_used`, derived `cost`. A variant that is smaller but falls below the quality floor is not selected; a bigger one is only selected if quality gains outweigh its size.
