@@ -5,7 +5,7 @@ An immutable, signed artifact published to a registry. S2 pulls and verifies; S1
 ```
 Bundle {
   manifest: {
-    root:         HashId                  // the promoted Substrate or Microbe set
+    root:         HashId                  // the promoted Swarm or Agent set
     router:       HashId                  // router Unit (role: router) shipped with the bundle
     default:      HashId                  // required generalist fallback member for cold starts
     closure:      [HashId]                // every Unit/primitive needed, by hash

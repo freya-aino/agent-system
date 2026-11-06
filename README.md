@@ -1,6 +1,6 @@
 # Agent System — Spec Scaffold
 
-A biology-inspired, continuously evolving agent framework. Agents are hashable data; lineages of them are bred, tested and promoted by **Service 1 (Evolution)**, and served by **Service 2 (Deployment)** as locked, isolated, headless agents.
+A continuously evolving agent framework. Agents are hashable data; lineages of them are evolved, tested and promoted by **Service 1 (Evolution)**, and served by **Service 2 (Deployment)** as locked, isolated, headless agents.
 
 ## Rules for this spec set
 1. **Contracts are the only shared surface.** Every component spec depends on `contracts/` and nothing else. A component spec must be readable alone with `contracts/`.
@@ -11,18 +11,18 @@ A biology-inspired, continuously evolving agent framework. Agents are hashable d
 - Deployable to an arbitrary location; isolation is a driver (process/container for dev, Firecracker for prod).
 - Two services, each horizontally scalable. S1 has a dashboard; S2 is headless.
 - S1 creates, tests and maintains lineages from a hashable primitive set; lineages use advertised endpoints.
-- Breeder: SOTA genetic algorithms + RL + MCMC; LLM adversaries allowed.
-- Metrics are programmatic. Judge/adversary/comparator Microbes are built from the same primitives and flagged.
-- The Cell/Microbe library works standalone as a LangGraph-style workflow builder.
+- Meta-Optimizer: SOTA genetic algorithms + RL + MCMC; LLM adversaries allowed.
+- Metrics are programmatic. Judge/adversary/comparator Agents are built from the same primitives and flagged.
+- The Node/Agent library works standalone as a LangGraph-style workflow builder.
 - Runtime "triangulation" locates a task prompt in task-class space; most prompts yield one or two workflow runs.
 
 ## Decisions carried in
 - Prod is **select-only**: S2 routes to locked lineage members; nothing mutates in prod.
 - **No external writes.** Task-scoped memory buffer only; persistence = read-only pinned workspace snapshot + read-only versioned knowledge stores.
-- Graph rules: guarded edges, bounded cycles, typed state channels with reducers, no Microbe nesting (Microbes interact only in a Substrate); all statically checkable and bounded.
-- Router/planner is an evolvable Microbe lineage using task-class priors + cheap probes.
+- Graph rules: guarded edges, bounded cycles, typed state channels with reducers, no Agent nesting (Agents interact only in a Swarm); all statically checkable and bounded.
+- Router/planner is an evolvable Agent lineage using task-class priors + cheap probes.
 - Handoff is **pull-based signed bundles**; telemetry is one-way and content-free. S1 has no write path into S2.
-- Nature/Breeder state is sharded by population, one writer per shard; run workers are stateless.
+- Optimizer/Meta-Optimizer state is sharded by population, one writer per shard; run workers are stateless.
 
 ## Stack
 See `stack.md`: Rust workspace, SHA-256 hashing, devenv, Firecracker, S3 + Postgres (+ HelixDB candidate), MCP/A2A over HTTP, docker compose for test/dev/simulation.
@@ -34,13 +34,13 @@ See `stack.md`: Rust workspace, SHA-256 hashing, devenv, Firecracker, S3 + Postg
 
 | # | Component | Service | Purpose | Contracts used |
 |---|-----------|---------|---------|----------------|
-| C1 | `library` | both (SDK) | Primitives, Cell, Microbe; compile/validate; usable standalone | unit, hash |
+| C1 | `library` | both (SDK) | Primitives, Node, Agent; compile/validate; usable standalone | unit, hash |
 | C2 | `runtime` | both | Executes instances with limits; isolation driver interface; emits traces | unit, trace |
-| C3 | `metrics` | S1 (+S2 monitoring) | Programmatic metric library over traces; distributions; judge-Microbe flagging | trace, unit |
+| C3 | `metrics` | S1 (+S2 monitoring) | Programmatic metric library over traces; distributions; judge-Agent flagging | trace, unit |
 | C4 | `store` | both | Content-addressed storage + genealogy + event log | hash, store |
 | C5 | `archive` | S1 | Unbounded stepping-stone archive; bounded pools as views; slot fit | unit, store |
-| C6 | `nature` | S1 | Staged-funnel selection, variation operators, Substrate variation | unit, trace, store |
-| C7 | `breeder` | S1 | MCMC baseline, GA/QD, RL with unrolls; clade-level reward; baselines | unit, store, trace |
+| C6 | `optimizer` | S1 | Staged-funnel selection, variation operators, Swarm variation | unit, trace, store |
+| C7 | `meta-optimizer` | S1 | MCMC baseline, GA/QD, RL with unrolls; subtree-level reward; baselines | unit, store, trace |
 | C8 | `router` | S1 (train) / S2 (serve) | Task-class descriptor, priors, contextual selection, probes | task-class, unit |
 | C9 | `promotion` | S1 → registry | Gates, approval events, bundle build and signing | bundle, store |
 | C10 | `s1-service` | S1 | API, workers, shard coordination, dashboard | all |
@@ -55,4 +55,4 @@ See `stack.md`: Rust workspace, SHA-256 hashing, devenv, Firecracker, S3 + Postg
 ## Open questions (scaffold-level)
 - Language(s) for the SDK vs services.
 - Event sink / registry technology for "arbitrary location" deployments.
-- Gate and approval policy details (human first, Nature later) carried over from old spec 14.
+- Gate and approval policy details (human first, the Optimizer later) carried over from old spec 14.

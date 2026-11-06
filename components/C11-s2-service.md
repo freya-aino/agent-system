@@ -30,12 +30,12 @@ Outputs:
 ```
  clients --protocol--> [Stateless Front xN: adapters, auth, quotas, router, session pin]
                            | internal RPC (mTLS)
-                       [VM hosts xM: driver.md Driver -> microVM per bundle/Substrate instance]
+                       [VM hosts xM: driver.md Driver -> microVM per bundle/Swarm instance]
  registry --pull--> [Bundle puller/verifier (per host, local cache)]
  [Telemetry exporter] ---one-way---> event sink
 ```
 - **Front** (stateless, scaled horizontally): terminates protocols, authenticates callers, runs the router Unit for selection, forwards to a host that has the target deployment warm. Session pins are soft state (consistent hashing on session id plus a short-TTL table); losing them degrades gracefully.
-- **VM host**: runs instances; a scheduler places one isolated instance per bundle/Substrate (microVM per instance, many concurrent requests as separate task-scoped runs in it, or one run per restored snapshot, per config).
+- **VM host**: runs instances; a scheduler places one isolated instance per bundle/Swarm (microVM per instance, many concurrent requests as separate task-scoped runs in it, or one run per restored snapshot, per config).
 - **Puller/verifier**: polls registry on an interval; only files/env tell it which roots to follow.
 
 ## Bundle pull and verification
@@ -55,7 +55,7 @@ Failure leaves the previous deployment untouched. Verification results are emitt
 Drivers declare `isolation_level: process | container | microvm` (driver.md). Selection by config; prod profile requires `microvm` (Firecracker), and the service **refuses to start in prod profile with a weaker driver** unless an explicit, logged `allow_weaker_isolation` override is present. Egress is expressed as the contract `EgressPolicy` (`allow`, `connectors_only`).
 Microvm (Firecracker) driver requirements:
 - Linux with KVM (`/dev/kvm`), per-VM jailer, seccomp, cgroups; **snapshot restore** from a per-bundle warm snapshot for fast, clean instance starts; instance memory is discarded after use (no state bleed between requests/sessions unless the function scope is `session`).
-- **One microVM per bundle/Substrate instance**; bundles never share a VM.
+- **One microVM per bundle/Swarm instance**; bundles never share a VM.
 - Hardening: no inbound credentials in the VM; connectors mounted **read-only** (virtio block ro / read-only proxy); network egress is deny-by-default with a per-bundle **allowlist** (provider endpoints, pinned connector hosts); no host filesystem; metadata services unreachable; resource limits (vCPU, memory, disk, pids, wall-time) from the manifest `Limits` capped by host config; tokens/cost limits enforced by runtime.
 - Provider credentials, if needed, are injected by an egress proxy at the host edge, scoped per bundle, never placed in guest memory or snapshots.
 **Fallbacks (Firecracker needs Linux/KVM; driver.md)**: `container` driver (gVisor/Kata-class runtime or hardened OCI with seccomp, read-only rootfs, no-new-privileges, user namespaces, network policy) and `process` driver (dev only: rlimits, separate uid, namespace where available). Each driver's `isolation_level` is written to startup logs and telemetry events; macOS/Windows/no-KVM hosts get `container` or `process`. The same bundle runs unchanged on all drivers; only guarantees differ.
@@ -92,7 +92,7 @@ Streaming is a deployment-level boolean (config). When on, the adapter emits `St
 - Only verified bundles are ever executed; an unverified or failed bundle never serves, and the previous active deployment stays.
 - Select-only: no code path in S2 modifies, generates, or loads a Unit outside a verified bundle closure.
 - No external writes, no inbound credentials in any VM, connectors read-only at pinned versions, egress deny-by-default.
-- One microVM (or equivalent isolated instance) per bundle/Substrate instance; no sharing across bundles.
+- One microVM (or equivalent isolated instance) per bundle/Swarm instance; no sharing across bundles.
 - Telemetry is one-way and content-free; honoring `no_sample` is absolute.
 - Every run is bounded by `Limits` (bundle) intersected with host caps; exhaustion returns `completion: limit_exhausted`.
 - Behaviour is determined by files/env only; with identical config and bundles two replicas route identically given the same `request_id`.

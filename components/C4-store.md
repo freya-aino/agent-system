@@ -3,7 +3,7 @@
 Implements `contracts/store.md`. Depends on: `hash.md`, `store.md`, `trace-event.md` (Event, no_sample), `types.md` (BlobRef, ShardId, Budget), `unit.md` (only as opaque payloads).
 
 ## Purpose
-One storage substrate for both services: immutable content-addressed objects, a genealogy graph, an append-only event log, and two isolated zones (`inbound`, `outbound`). It must run unchanged on local disk, object storage or a database, and scale horizontally by sharding writers per population.
+One storage layer for both services: immutable content-addressed objects, a genealogy graph, an append-only event log, and two isolated zones (`inbound`, `outbound`). It must run unchanged on local disk, object storage or a database, and scale horizontally by sharding writers per population.
 
 ## Owned data
 - **Object space** (per zone): `HashId -> bytes`. Kinds are opaque to the store (Units, primitives, datasets, bundles); a small envelope `{kind_hint, size}` is kept as metadata only, never hashed.

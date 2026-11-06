@@ -32,7 +32,7 @@ ContentFreeSummary { tokens, wall_ms, cost, probe_cost, hops, loop_iterations, c
 Event { id, shard: ShardId, seq: int, prev: HashId, ts: Timestamp, actor, kind, subject: HashId, data, evidence: [HashId] }
 ```
 - Ordering is by `(shard, seq)` with a hash chain through `prev`; `ts` is advisory and never trusted across locations.
-- `actor` is `human:<id>`, `nature:<id>`, `system:<component>` or `service:<s2-instance>`.
+- `actor` is `human:<id>`, `optimizer:<id>`, `system:<component>` or `service:<s2-instance>`.
 
 Event kinds (open set; every kind's `data` schema is registered in events.md):
 - Lineage: `committed`, `retired`, `quarantined`, `pool_admitted`, `pool_evicted`, `elite_replaced`.
@@ -43,8 +43,8 @@ Event kinds (open set; every kind's `data` schema is registered in events.md):
 - Safety: `kill_switch`, `budget_exhausted`, `infra_failure`, `provider_failure`, `scrub_violation`, `telemetry_gap`, `observability_degraded`.
 
 ```
-Outcome { kind: ok | compile_error | operator_error | cell_fail | run_error | limit_exhausted | budget_exhausted | eliminated_early | infra_error,
-          stage: compile | cell | microbe | substrate,
+Outcome { kind: ok | compile_error | operator_error | node_fail | run_error | limit_exhausted | budget_exhausted | eliminated_early | infra_error,
+          stage: compile | node | agent | swarm,
           unit: HashId, parents: [HashId], operator: string, evaluation: HashId?, result: FitnessRecord?,
           detail_ref: BlobRef?, cost: Budget }
 ```

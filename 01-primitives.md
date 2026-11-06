@@ -1,20 +1,20 @@
 # 01 — Primitives and the Unit Model
 
 ## Purpose
-Define (a) the leaf primitives from which Cells are assembled and (b) the **Unit**: the single structure that Cells, Microbes and Substrates all instantiate.
+Define (a) the leaf primitives from which Nodes are assembled and (b) the **Unit**: the single structure that Nodes, Agents and Swarms all instantiate.
 
 ## The Unit (shared structure of levels 1–3)
-Cell, Microbe and Substrate are not three designs but one, adapted per level. Specs 04, 05 and 07 only state what each field means at their level.
+Node, Agent and Swarm are not three designs but one, adapted per level. Specs 04, 05 and 07 only state what each field means at their level.
 
 ```
 Unit {
-  level:     1 (cell) | 2 (microbe) | 3 (substrate) | 4 (nature) | 5 (breeder)
-  members:   map<Slot, HashId>   // children by hash. L1: leaf primitives; L2: Cells + comm
-                                 //   primitives; L3: Microbes (by role) + connector bindings
+  level:     1 (node) | 2 (agent) | 3 (swarm) | 4 (optimizer) | 5 (meta_optimizer)
+  members:   map<Slot, HashId>   // children by hash. L1: leaf primitives; L2: Nodes + comm
+                                 //   primitives; L3: Agents (by role) + connector bindings
                                  //   + workload + metric refs
   interface: { inputs, outputs } // L1: exactly 1/1; L2: entry/exit points;
                                  //   L3: advertised services + protocol bindings
-  relation:  structure among members  // L1: none (set); L2: graph of Cells (bounded cycles) + schedule;
+  relation:  structure among members  // L1: none (set); L2: graph of Nodes (bounded cycles) + schedule;
                                  //   L3: routing (direct | shared-data | isolated)
   policy:    HashId              // limits: L1 tokens/time; L2 energy (hops), total budget;
                                  //   L3 horizon, run budget
@@ -31,9 +31,9 @@ Common lifecycle and operations, identical at every level:
 `validate → compile → instantiate(seed) → run → collect metrics → vary (new Unit + genealogy link in the store)`.
 What differs per level is only the `adapter` logic and the schemas of `members`, `interface` and `relation`.
 
-Ancestry applies at every level: Cells, Microbes and Substrates all form **lineages**. Ancestry is **not a Unit field**: every Unit is immutable, and each variation appends a genealogy link (child, parents, provenance) to the store (spec 10), so lineages are derived from immutable prior records. A "general-purpose" Microbe (judge, comparator, adversary, ...) is simply a lineage whose Units carry that hashed `role`; there is no separate mechanism.
+Ancestry applies at every level: Nodes, Agents and Swarms all form **lineages**. Ancestry is **not a Unit field**: every Unit is immutable, and each variation appends a genealogy link (child, parents, provenance) to the store (spec 10), so lineages are derived from immutable prior records. A "general-purpose" Agent (judge, comparator, adversary, ...) is simply a lineage whose Units carry that hashed `role`; there is no separate mechanism.
 
-Levels 4 and 5 (Nature, Breeder) are Units too: `members` = algorithm code + hyperparameters + learned parameters (each hashed), `interface` = the operations in specs 12 and 13, `adapter` = the algorithm logic. A Breeder run therefore has a reproducible identity, and Breeders can themselves be varied, compared and given lineages.
+Levels 4 and 5 (Optimizer, Meta-Optimizer) are Units too: `members` = algorithm code + hyperparameters + learned parameters (each hashed), `interface` = the operations in specs 12 and 13, `adapter` = the algorithm logic. A Meta-Optimizer run therefore has a reproducible identity, and Meta-Optimizers can themselves be varied, compared and given lineages.
 
 ## Responsibilities
 - Provide a closed set of primitive *kinds*, each with a schema.
@@ -64,7 +64,7 @@ Kinds (initial set):
 | `skill` | Named capability bundle: instructions + referenced tools/code |
 | `tool` | Tool binding: name, interface schema, endpoint/transport (e.g. MCP server ref) |
 | `memory` | Declared memory policy (none, window, store ref) — see open questions |
-| `comm` | Communication primitive (used by Microbes, spec 05): message schema, max length, address rule, frequency rule |
+| `comm` | Communication primitive (used by Agents, spec 05): message schema, max length, address rule, frequency rule |
 | `policy` | Limits: token/cost/time/step budgets |
 
 ## Interfaces
@@ -79,6 +79,6 @@ Kinds (initial set):
 - Should `code` primitives be sandbox-declared (capabilities listed) or trusted?
 
 ## Decisions (resolved)
-- `memory` primitive declares only a **policy** (none / window / store type). Memory contents are runtime state (phenotype) and never hashed.
+- `memory` primitive declares only a **policy** (none / window / store type). Memory contents are runtime (instance) state and never hashed.
 - `model` primitives pin an exact provider snapshot; aliases are not allowed.
-- A Cell's primitives form a set (single input, single output); a "skill" or "tool" may itself be a whole Cell when composed in a Microbe.
+- A Node's primitives form a set (single input, single output); a "skill" or "tool" may itself be a whole Node when composed in an Agent.

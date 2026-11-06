@@ -36,10 +36,10 @@ Outputs:
           [Run workers xM, stateless] --traces--> [result inbox] --> writer --> Store
 ```
 - **API** (stateless, horizontally scaled): REST+JSON, OpenAPI published. Resources: `/experiments`, `/lineages/{root}`, `/units/{hash}`, `/jobs`, `/budgets`, `/promotions`, `/events` (paged `query` + `subscribe`/SSE), `/killswitch`, `/health`. All mutations carry an idempotency key.
-- **Shard coordinator**: assigns each population shard to exactly one **writer** via a fencing lease (`epoch` increases on each takeover). Only the lease holder calls `append`/`link` for that shard, passing its `Fence`. Writers also run the plug-in loops that need single-writer semantics (Nature selection step, Breeder update, archive commit). The coordinator itself is replicated; leadership uses the lease backend.
+- **Shard coordinator**: assigns each population shard to exactly one **writer** via a fencing lease (`epoch` increases on each takeover). Only the lease holder calls `append`/`link` for that shard, passing its `Fence`. Writers also run the plug-in loops that need single-writer semantics (the Optimizer selection step, Meta-Optimizer update, archive commit). The coordinator itself is replicated; leadership uses the lease backend.
 - **Run workers**: stateless; pull jobs, execute via the `Driver` interface of driver.md (`process`/`container` for dev; `microvm` where available), return `Trace` plus `experiment_outcome` data to the shard's result inbox. Scale on queue depth and per-shard backlog. Workers hold no population state and cache only immutable, hash-verified objects.
-- **Job queue**: at-least-once delivery, visibility-timeout leases, per-shard partitioning, priority classes (`probe` < `eval` < `breed` < `build`), dead-letter queue. Duplicate delivery is harmless because results are keyed by `(job_id, attempt)` and the writer dedups.
-- **Plug-in points** (interfaces owned by other components, only consumed here): `selection_step(shard)`, `breeder_step(shard)`, `archive_view(shard)`, `metrics_summarize(traces)`, `promotion_gate(candidate)`, `build_bundle(candidate)`. Each is invoked inside the writer or as a queued job; this spec fixes who may call them, not their logic.
+- **Job queue**: at-least-once delivery, visibility-timeout leases, per-shard partitioning, priority classes (`probe` < `eval` < `vary` < `build`), dead-letter queue. Duplicate delivery is harmless because results are keyed by `(job_id, attempt)` and the writer dedups.
+- **Plug-in points** (interfaces owned by other components, only consumed here): `selection_step(shard)`, `meta_optimizer_step(shard)`, `archive_view(shard)`, `metrics_summarize(traces)`, `promotion_gate(candidate)`, `build_bundle(candidate)`. Each is invoked inside the writer or as a queued job; this spec fixes who may call them, not their logic.
 
 ## Backends (config-driven, no code change per location)
 Config file + env override, validated at start; startup fails on unknown or missing keys.
@@ -65,7 +65,7 @@ A single-binary dev profile (SQLite + in-process queue + process driver + local 
 ## Dashboard
 Served from the API's read endpoints; read-only except approval and kill-switch actions, which require elevated roles and each append an Event with the human actor.
 - **Lineage tree**: genealogy from `lineage(zone, hash)` and `link` provenance (operator, seed, `programmatic|llm_proposed`, diff view); retired and quarantined nodes remain visible.
-- **Fitness distributions**: per metric per Unit/clade, as distributions with `n` (never single numbers alone); comparison between two Units shows the effect size and interval.
+- **Fitness distributions**: per metric per Unit/subtree, as distributions with `n` (never single numbers alone); comparison between two Units shows the effect size and interval.
 - **Pareto fronts**: multi-metric fronts for a pool, with cost and latency as axes; dominated members greyed, not hidden.
 - **Archive map**: stepping-stone archive projected on descriptor axes (QD cells / task-class regions), showing occupancy, elites, and slot fit of bounded pools.
 - **Experiment outcomes**: a table of all `experiment_outcome` events including failed compile/run, filterable by operator, failure kind, lineage. Failure rates per operator are first-class charts.
@@ -116,7 +116,7 @@ Coordinator: acquire(shard) -> {epoch} ; renew ; release
 - Whether result inbox is part of the Store (as events) or a separate channel.
 - Auto-scaling signal: queue depth vs reserved-budget rate; who owns the scaler (service vs platform).
 - Shard count and resharding policy (split of a population across shards) and how lineage queries span shards.
-- Four-eyes default and later hand-over of approval to Nature (policy details from old spec 14).
+- Four-eyes default and later hand-over of approval to the Optimizer (policy details from old spec 14).
 - Retention of traces vs Events; dashboard access to payloads under `no_sample`.
 
 ## Resolved by contracts

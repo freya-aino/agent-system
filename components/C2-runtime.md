@@ -3,11 +3,11 @@
 Depends on contracts: `unit`, `trace-event`, `driver`, `types`. Executes compiled Units (C1 output shape) and emits `Trace`. Does not depend on any other component's internals.
 
 ## Purpose
-Run Instances of Cells and Microbes under `Limits`, with strong isolation, stateless workers, parallel execution along the causal frontier, and a causal, provider-annotated Trace from which all metrics are derived.
+Run Instances of Nodes and Agents under `Limits`, with strong isolation, stateless workers, parallel execution along the causal frontier, and a causal, provider-annotated Trace from which all metrics are derived.
 
 ## Owned data
 - **RunRequest**: as defined in unit.md (`{ unit, input, seed, workspace_ref?, flags, budget, job_ref? }`); the runtime additionally accepts a `CompiledUnit` in place of the hash, and `run_id`/`connectors` supplied by the caller (component-specific extension).
-- **Instance** (phenotype, never hashed): `{ unit, run_id, seed, workspace_ref, state }` where `state` = channel values + task memory buffer + cursor (frontier, loop counters, spent budget).
+- **Instance** (never hashed): `{ unit, run_id, seed, workspace_ref, state }` where `state` = channel values + task memory buffer + cursor (frontier, loop counters, spent budget).
 - **Checkpoint**: serialisable Instance state at a step boundary; enables snapshot-restore and resume on another worker.
 - **Price table pin**: the `PriceTable` (types.md; its hash is recorded in `Trace.price_table`) maps model id → in/out price; never live provider data.
 - Nothing durable otherwise: runtime owns no store; Traces and payloads are handed to the caller/sink.
@@ -30,7 +30,7 @@ Drivers: `process` (dev, rlimits/seccomp), `container` (dev/CI), `microvm`/Firec
 
 ## Execution model
 - **Stateless workers**: a worker holds no cross-run state. All needed state is in the RunRequest/Checkpoint; any worker can run or resume any run. Per-run state lives in the Instance and dies with it.
-- **Causal frontier scheduling**: a node is ready when all its `join` predecessors completed and an incoming guard evaluated true. All ready nodes run concurrently, bounded by `limits` and a `Limits.max_concurrency`; fan-out is bounded by `Edge.fanout`/`Limits.max_fanout`. A step = one Cell decision (one Span).
+- **Causal frontier scheduling**: a node is ready when all its `join` predecessors completed and an incoming guard evaluated true. All ready nodes run concurrently, bounded by `limits` and a `Limits.max_concurrency`; fan-out is bounded by `Edge.fanout`/`Limits.max_fanout`. A step = one Node decision (one Span).
 - **Reducers**: concurrent channel writes are merged in a deterministic order (happens-before, then NodeId), so results do not depend on wall-clock completion order.
 - **Guards** are evaluated by the runtime in a trusted pure evaluator (or the sandbox, for custom code), recorded on the Span as an edge decision.
 - **Limits** checked before each step and after each response: `max_tokens`, `max_cost`, `max_wall_ms`, `max_hops`, `max_loop_iterations` (per bounded edge and total). Cost and token budget are **reserved** conservatively before dispatch (from the node's own `Limits`), and settled after.
