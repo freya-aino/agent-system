@@ -6,10 +6,12 @@
 //!
 //! Spec files land here milestone by milestone. Currently implemented:
 //! `types.md`, `hash.md` (string form of `HashId`), `schema.md` (crossing types only:
-//! `Fit`), `metric.md`.
+//! `Fit`), `metric.md`, `primitive.md`, `unit.md`.
 
 pub mod metric;
+pub mod primitive;
 pub mod schema;
 pub mod types;
+pub mod unit;
 
 pub use types::*;

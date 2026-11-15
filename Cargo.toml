@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/contracts", "crates/core"]
+members = ["crates/contracts", "crates/core", "crates/library"]
 
 [workspace.package]
 edition = "2024"
@@ -11,6 +11,7 @@ publish = false
 [workspace.dependencies]
 agent-contracts = { path = "crates/contracts" }
 agent-core = { path = "crates/core" }
+agent-library = { path = "crates/library" }
 
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: canonical hashing requires wire round-trips to preserve doubles

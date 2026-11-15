@@ -1004,19 +1004,23 @@ fn provably_disjoint(x: &Schema, y: &Schema) -> bool {
             Schema::Object {
                 properties: xp,
                 required: xr,
-                ..
+                additional: xa,
             },
             Schema::Object {
                 properties: yp,
                 required: yr,
-                ..
+                additional: ya,
             },
         ) => {
-            // Discriminated by a shared required property with provably-disjoint schemas.
-            xr.intersection(yr).any(|p| match (xp.get(p), yp.get(p)) {
+            // Discriminated by a shared required property with provably-disjoint
+            // schemas, or by a required key the other (closed) object cannot carry.
+            let discriminator = xr.intersection(yr).any(|p| match (xp.get(p), yp.get(p)) {
                 (Some(a), Some(b)) => provably_disjoint(a, b),
                 _ => false,
-            })
+            });
+            let key_mismatch = (xa.is_none() && yr.iter().any(|p| !xp.contains_key(p)))
+                || (ya.is_none() && xr.iter().any(|p| !yp.contains_key(p)));
+            discriminator || key_mismatch
         }
         (
             Schema::Integer {
