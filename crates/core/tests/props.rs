@@ -397,7 +397,11 @@ proptest! {
         // secret check is the only string rejection.
         match canon::canonicalize(DomainTag::Event, &v) {
             Ok(bytes) => prop_assert!(!bytes.is_empty()),
-            Err(d) => prop_assert!(d.code == "decimal_string_required" || d.code == "secret_in_hashable_field"),
+            Err(d) => prop_assert!(
+                d.code == "decimal_string_required"
+                    || d.code == "secret_in_hashable_field"
+                    || d.code == "non_nfc_string"
+            ),
         }
     }
 }

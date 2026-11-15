@@ -17,12 +17,26 @@
 //! **C2 does not depend on C1.** The runtime loads a [`load::Closure`] of
 //! contract-typed values (`Unit` + resolved primitives), which is exactly what the
 //! library's `CompiledUnit` carries, so callers can feed a compiled unit in without
-//! the runtime depending on the library.
+//! the runtime depending on the library. Loading verifies every object against the
+//! id it arrived under, because a worker trusts hashes, not senders.
+//!
+//! **Isolation is a driver, and the driver says what it is.**
+//! [`driver::ProcessDriver`] runs the Instance in its own process with rlimits and
+//! `no_new_privs`; [`driver::LocalDriver`] runs it in this address space and demands
+//! an explicit acknowledgement that it is not a sandbox. Either way `Driver::health`
+//! names what is *not* enforced, so a deployment cannot be confidently wrong about
+//! its own confinement.
+//!
+//! **One metered-call seam, in-process and across a process boundary.** Nodes reach
+//! models and connectors only through [`driver::MeteredCalls`]: in-process that is
+//! the broker directly, and in a sandbox it is a proxy that asks the host, which is
+//! what keeps credentials out of guest memory entirely.
 
 pub mod broker;
 pub mod driver;
 pub mod engine;
 pub mod exec;
+pub mod http_provider;
 pub mod limits;
 pub mod load;
 pub mod metered;

@@ -19,6 +19,11 @@ serde = { version = "1", features = ["derive"] }
 # exactly; serde_json's default fast-path float parse is lossy.
 serde_json = { version = "1", features = ["float_roundtrip"] }
 sha2 = "0.10"
+# NFC verification for the canonical encoder (hash.md requires NFC strings).
+unicode-normalization = "0.1"
+# TLS for the OpenAI-compatible provider client. The HTTP/1.1 framing itself is
+# in-house (deps.md); rustls supplies only the transport.
+rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }
 rand_chacha = "0.9"
 thiserror = "2"
 proptest = "1"

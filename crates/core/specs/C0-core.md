@@ -10,8 +10,10 @@ no I/O, no clock, no global state.
 
 ## Owned data
 - **Canonical encoder**: RFC 8785 plus the three constraints in hash.md, with the domain tags. Encoding is a total
-  function on the accepted value space and errors (never silently coerces) on NaN, infinity, non-NFC-normalisable
-  input, or a number that needs decimal-string treatment in a field not declared as such.
+  function on the accepted value space and errors (never silently coerces) on NaN, infinity, a string or object
+  key that is not already in NFC, or a number that needs decimal-string treatment in a field not declared as such.
+  Normalisation is offered separately (`to_nfc`, `normalise`) so an author applies it as a recorded step: the
+  encoder never rewrites a value, because that would change its identity without telling anyone.
 - **Hasher**: `hash_spec: 1` = SHA-256 over `domain_tag || canonical(value)`. The `HashId` string form carries the
   algorithm so a future `hash_spec` coexists with this one.
 - **Schema engine**: parser and validator for the subset in schema.md, plus `Subsumes` and `slot_fit`.

@@ -6,10 +6,11 @@
 //! decimal-string treatment, which the field's schema must declare), no NaN/infinity
 //! (unrepresentable in `serde_json::Value`).
 //!
-//! KNOWN GAP (hash_spec 1): NFC verification of strings is not yet enforced — a full
-//! check needs Unicode normalization tables, which the dependency budget does not yet
-//! cover. Non-NFC input would hash to a different id than its NFC form instead of
-//! being refused. Tracked for resolution before any cross-system hashes are exchanged.
+//! Strings — values and object keys alike — must already be in NFC. The encoder
+//! **refuses** non-NFC input rather than normalising it: normalising silently would
+//! change a value's identity without telling the author, and two canonically
+//! equivalent descriptions would then share one hash while the stored text differed.
+//! Authors normalise deliberately with [`to_nfc`] before building a hashable object.
 
 use agent_contracts::{Diagnostic, HashId};
 use serde_json::Value;
@@ -114,6 +115,7 @@ impl Canon {
             Value::Bool(false) => out.extend_from_slice(b"false"),
             Value::Number(n) => out.extend_from_slice(encode_number(n, path)?.as_bytes()),
             Value::String(s) => {
+                check_nfc(s, path)?;
                 self.check_secret(s, path)?;
                 encode_string(s, out);
             }
@@ -138,6 +140,9 @@ impl Canon {
                     if i > 0 {
                         out.push(b',');
                     }
+                    // A key is part of the hash input, so it is held to the same
+                    // normalisation rule as a value.
+                    check_nfc(key, path)?;
                     encode_string(key, out);
                     out.push(b':');
                     let len = path.len();
@@ -203,6 +208,95 @@ pub fn hashable_view_excluding(value: &Value, excluded: &[&str]) -> Value {
                 .map(|v| hashable_view_excluding(v, excluded))
                 .collect(),
         ),
+        other => other.clone(),
+    }
+}
+
+/// `hash.md`'s identity of a Primitive: its own fields and the hashes of what it
+/// references, with `labels` and the `hash` field itself excluded.
+///
+/// This projection lives here, with the hasher, because every component that
+/// computes or verifies an identity must apply exactly the same one: the library
+/// when it builds a primitive, the runtime when it verifies a closure it was handed.
+pub fn hash_primitive_value(value: &Value) -> Result<HashId, Diagnostic> {
+    Canon::default().hash(DomainTag::Primitive, &strip_top(value, &["labels", "hash"]))
+}
+
+/// The same for a Unit: `labels` and `hash` at the top, and the presentation-only
+/// `label` on each graph node. Nothing deeper is touched, so a schema document whose
+/// property happens to be named `label` keeps it — there it is data, not
+/// presentation.
+pub fn hash_unit_value(value: &Value) -> Result<HashId, Diagnostic> {
+    let mut v = strip_top(value, &["labels", "hash"]);
+    if let Some(Value::Object(graph)) = v.get_mut("graph")
+        && let Some(Value::Object(nodes)) = graph.get_mut("nodes")
+    {
+        for node in nodes.values_mut() {
+            if let Value::Object(n) = node {
+                n.remove("label");
+            }
+        }
+    }
+    Canon::default().hash(DomainTag::Unit, &v)
+}
+
+fn strip_top(value: &Value, keys: &[&str]) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .filter(|(k, _)| !keys.contains(&k.as_str()))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Refuse a string that is not already in NFC (`hash.md`: "Strings are UTF-8 in
+/// NFC"). ASCII is NFC by construction, so the common case costs one scan and no
+/// table lookups.
+fn check_nfc(s: &str, path: &str) -> Result<(), Diagnostic> {
+    if s.is_ascii() || unicode_normalization::is_nfc(s) {
+        return Ok(());
+    }
+    Err(Diagnostic::error(
+        "non_nfc_string",
+        path,
+        "string is not in Unicode NFC; normalise it deliberately (core::canon::to_nfc) before hashing, \
+         because normalising here would change the value's identity silently",
+    ))
+}
+
+/// Normalise to NFC. Callers use this when building a hashable object, so the
+/// normalisation is a recorded authoring step rather than a hidden encoder effect.
+pub fn to_nfc(s: &str) -> String {
+    if s.is_ascii() {
+        return s.to_owned();
+    }
+    unicode_normalization::UnicodeNormalization::nfc(s).collect()
+}
+
+/// True when every string in the value (and every object key) is already NFC: the
+/// check a builder runs before offering a value for hashing.
+pub fn is_all_nfc(value: &Value) -> bool {
+    match value {
+        Value::String(s) => s.is_ascii() || unicode_normalization::is_nfc(s),
+        Value::Array(items) => items.iter().all(is_all_nfc),
+        Value::Object(map) => map
+            .iter()
+            .all(|(k, v)| (k.is_ascii() || unicode_normalization::is_nfc(k)) && is_all_nfc(v)),
+        _ => true,
+    }
+}
+
+/// Normalise every string and key in a value to NFC, in place of the value.
+pub fn normalise(value: &Value) -> Value {
+    match value {
+        Value::String(s) => Value::String(to_nfc(s)),
+        Value::Array(items) => Value::Array(items.iter().map(normalise).collect()),
+        Value::Object(map) => {
+            Value::Object(map.iter().map(|(k, v)| (to_nfc(k), normalise(v))).collect())
+        }
         other => other.clone(),
     }
 }
@@ -401,5 +495,71 @@ mod tests {
             json!({"role": "judge", "labels": ["x"], "graph": {"label": "pretty", "nodes": []}});
         let stripped = hashable_view(&v);
         assert_eq!(stripped, json!({"role": "judge", "graph": {"nodes": []}}));
+    }
+}
+
+#[cfg(test)]
+mod nfc_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// "é" composed (U+00E9) and decomposed (U+0065 U+0301) are canonically
+    /// equivalent but different byte sequences. Only the composed form may be hashed.
+    const COMPOSED: &str = "caf\u{e9}";
+    const DECOMPOSED: &str = "cafe\u{301}";
+
+    #[test]
+    fn composed_strings_encode_and_decomposed_ones_are_refused() {
+        assert!(canonicalize(DomainTag::Unit, &json!(COMPOSED)).is_ok());
+        let err = canonicalize(DomainTag::Unit, &json!(DECOMPOSED)).unwrap_err();
+        assert_eq!(err.code, "non_nfc_string");
+    }
+
+    #[test]
+    fn object_keys_are_held_to_the_same_rule() {
+        let mut map = serde_json::Map::new();
+        map.insert(DECOMPOSED.to_owned(), json!(1));
+        let err = canonicalize(DomainTag::Unit, &Value::Object(map)).unwrap_err();
+        assert_eq!(err.code, "non_nfc_string");
+    }
+
+    #[test]
+    fn nested_values_are_checked() {
+        let v = json!({"outer": {"inner": [COMPOSED, DECOMPOSED]}});
+        let err = canonicalize(DomainTag::Unit, &v).unwrap_err();
+        assert_eq!(err.code, "non_nfc_string");
+        assert_eq!(err.path, "$.outer.inner[1]");
+    }
+
+    #[test]
+    fn normalising_is_a_deliberate_authoring_step() {
+        assert_eq!(to_nfc(DECOMPOSED), COMPOSED);
+        let v = json!({"k": DECOMPOSED});
+        assert!(!is_all_nfc(&v));
+        let fixed = normalise(&v);
+        assert!(is_all_nfc(&fixed));
+        // Once normalised, the two spellings are the same value and so the same hash.
+        assert_eq!(
+            hash(DomainTag::Unit, &fixed).unwrap(),
+            hash(DomainTag::Unit, &json!({"k": COMPOSED})).unwrap()
+        );
+    }
+
+    #[test]
+    fn ascii_is_nfc_by_construction() {
+        let ascii = json!({"plain": "hello world", "n": 1});
+        assert!(is_all_nfc(&ascii));
+        assert!(canonicalize(DomainTag::Unit, &ascii).is_ok());
+    }
+
+    #[test]
+    fn already_composed_non_ascii_text_is_accepted() {
+        // Greek, Cyrillic, CJK and emoji in NFC form are ordinary input.
+        for s in ["λόγος", "привет", "日本語", "🙂", "Ωmega"] {
+            assert!(
+                canonicalize(DomainTag::Unit, &json!(s)).is_ok(),
+                "{s:?} should encode"
+            );
+        }
     }
 }

@@ -123,6 +123,9 @@ struct State {
     edge_traversals: BTreeMap<usize, u64>,
     /// Exposed state of nodes whose memory policy declares `exposes`.
     exposed: BTreeMap<NodeId, Value>,
+    /// Which span produced each node's exposed state, so a `state-read` reader can
+    /// name its real cause in `happens_before`.
+    exposed_span: BTreeMap<NodeId, SpanId>,
     output: Option<Value>,
 }
 
@@ -549,10 +552,10 @@ fn run_graph<D: Driver, C: Clock, E: Executor>(
             let (result, memory) = match act.outcome {
                 Ok(o) => (o.result, o.memory),
                 Err(e) => {
-                    // A driver fault: retry the node once on a fresh sandbox is the
-                    // spec's remedy; every node is read-only and therefore
-                    // idempotent. The local driver has one sandbox, so a second
-                    // fault ends the run.
+                    // A fault of the execution environment itself, not of the node.
+                    // The run will end, but its siblings in this batch already ran:
+                    // settle them and keep their spans, because a content-free field
+                    // is never dropped silently.
                     limit.settle(
                         act.reservation,
                         Budget {
@@ -563,11 +566,11 @@ fn run_graph<D: Driver, C: Clock, E: Executor>(
                         },
                     );
                     trace.mark_degraded();
-                    failure = Some((
+                    failure.get_or_insert((
                         e.code,
                         FailureKind::from_error_code(e.code).unwrap_or(FailureKind::InfraError),
                     ));
-                    break;
+                    continue;
                 }
             };
             limit.settle(act.reservation, result.spent);
@@ -584,6 +587,7 @@ fn run_graph<D: Driver, C: Clock, E: Executor>(
                     && exposes(member)
                 {
                     state.exposed.insert(node.clone(), v.clone());
+                    state.exposed_span.insert(node.clone(), source_span.clone());
                 }
                 state.memories.insert(node.clone(), v);
             }
@@ -597,12 +601,13 @@ fn run_graph<D: Driver, C: Clock, E: Executor>(
                     let routed =
                         fire_error_edges(graph, &node, &error_value, &source_span, &mut fired);
                     if !routed {
-                        failure = Some((
+                        // Nothing routes this error, so the run ends with it — after
+                        // the rest of the batch is settled and traced.
+                        failure.get_or_insert((
                             err.code,
                             FailureKind::from_error_code(err.code)
                                 .unwrap_or(FailureKind::InfraError),
                         ));
-                        break;
                     }
                     continue;
                 }
@@ -649,7 +654,7 @@ fn run_graph<D: Driver, C: Clock, E: Executor>(
                 unit_hash,
                 clock.now_ms(),
                 max_fanout,
-                &mut state.edge_traversals.clone(),
+                &state.edge_traversals,
                 &mut fired,
             );
         }
@@ -874,9 +879,9 @@ fn state_view_for(
     {
         if let Some(v) = state.exposed.get(&e.from) {
             view.insert(e.from.clone(), v.clone());
-            // The state's producer causally precedes this activation.
-            if let Some(span) = state.memories.get(&e.from).and(None::<SpanId>) {
-                happens_before.push(span);
+            // The activation that wrote that state causally precedes this one.
+            if let Some(span) = state.exposed_span.get(&e.from) {
+                happens_before.push(span.clone());
             }
         }
     }
@@ -908,7 +913,9 @@ fn fire_value_edges(
     unit_hash: &HashId,
     now_ms: i64,
     max_fanout: usize,
-    traversals: &mut BTreeMap<usize, u64>,
+    // Read-only: an edge's traversal count is incremented once, by the caller, when
+    // the fired edge becomes a pending contribution.
+    traversals: &BTreeMap<usize, u64>,
     fired: &mut Vec<(usize, Value, SpanId)>,
 ) {
     let mut guarded_fired = false;
@@ -957,7 +964,6 @@ fn fire_value_edges(
         if taken && fired_here < max_fanout {
             guarded_fired = true;
             fired_here += 1;
-            *traversals.entry(idx).or_insert(0) += 1;
             fired.push((idx, value.clone(), source_span.clone()));
         }
     }
@@ -973,7 +979,6 @@ fn fire_value_edges(
                 break;
             }
             fired_here += 1;
-            *traversals.entry(idx).or_insert(0) += 1;
             fired.push((idx, value.clone(), source_span.clone()));
         }
     }
@@ -1200,7 +1205,11 @@ fn checkpoint_of(
     Checkpoint {
         instance: InstanceState {
             channels,
-            memory: Some(json!({"memories": state.memories, "exposed": state.exposed})),
+            memory: Some(json!({
+                "memories": state.memories,
+                "exposed": state.exposed,
+                "exposed_span": state.exposed_span,
+            })),
             cursor: agent_contracts::unit::Cursor {
                 frontier: state.pending.keys().cloned().collect(),
                 loop_counts: state.loop_counts.clone(),
@@ -1245,6 +1254,13 @@ fn restore_state(state: &mut State, instance: &InstanceState) {
         if let Some(exposed) = mem.get("exposed").and_then(Value::as_object) {
             for (k, v) in exposed {
                 state.exposed.insert(k.clone(), v.clone());
+            }
+        }
+        if let Some(spans) = mem.get("exposed_span").and_then(Value::as_object) {
+            for (k, v) in spans {
+                if let Some(id) = v.as_str() {
+                    state.exposed_span.insert(k.clone(), id.to_owned());
+                }
             }
         }
     }

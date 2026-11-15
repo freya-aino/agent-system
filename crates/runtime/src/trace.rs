@@ -201,8 +201,9 @@ impl TraceBuilder {
 }
 
 /// The causal fields the engine owns, handed to the driver so it can return a
-/// complete `Span` without inventing causality.
-#[derive(Debug, Clone, PartialEq)]
+/// complete `Span` without inventing causality. Serialisable because it crosses the
+/// sandbox boundary (`driver::sandbox_proto`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SpanSeed {
     pub id: SpanId,
     pub parent_span: Option<SpanId>,

@@ -57,6 +57,39 @@ impl Closure {
         };
         let mut diags = Vec::new();
 
+        // A worker is handed hash-addressed objects and verifies them (worker.md):
+        // content that does not hash to the id it arrived under is corrupt, and
+        // nothing in the closure can be trusted after that. The projection comes
+        // from C0, so this is the same identity the builder computed.
+        for (hash, p) in &closure.primitives {
+            match serde_json::to_value(p)
+                .map_err(|e| e.to_string())
+                .and_then(|v| agent_core::canon::hash_primitive_value(&v).map_err(|d| d.message))
+            {
+                Ok(actual) if actual == *hash && actual == p.hash => {}
+                Ok(actual) => diags.push(Diagnostic::error(
+                    "corrupt_object",
+                    hash.to_string(),
+                    format!("primitive content hashes to {actual}, not the id it arrived under"),
+                )),
+                Err(e) => diags.push(Diagnostic::error("corrupt_object", hash.to_string(), e)),
+            }
+        }
+        for (hash, u) in &closure.units {
+            match serde_json::to_value(u)
+                .map_err(|e| e.to_string())
+                .and_then(|v| agent_core::canon::hash_unit_value(&v).map_err(|d| d.message))
+            {
+                Ok(actual) if actual == *hash => {}
+                Ok(actual) => diags.push(Diagnostic::error(
+                    "corrupt_object",
+                    hash.to_string(),
+                    format!("unit content hashes to {actual}, not the id it arrived under"),
+                )),
+                Err(e) => diags.push(Diagnostic::error("corrupt_object", hash.to_string(), e)),
+            }
+        }
+
         for (slot, member) in &closure.root.members {
             let h = member.unit();
             if closure.primitives.contains_key(h) {

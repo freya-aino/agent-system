@@ -7,6 +7,9 @@
 //! other.
 
 pub mod local;
+pub mod node_exec;
+pub mod process;
+pub mod sandbox_proto;
 
 use agent_contracts::driver::{
     CredentialPolicy, EgressPolicy, Health, IsolationLevel, NodeResult, Sandbox, SandboxImage,
@@ -20,7 +23,9 @@ use serde_json::Value;
 use crate::provider::{ModelCall, ProviderError, ProviderResponse};
 use crate::trace::SpanSeed;
 
-pub use local::{HostFns, LocalDriver, UnisolatedAck};
+pub use local::{LocalDriver, UnisolatedAck};
+pub use node_exec::{HostFn, HostFns, NodeExecCtx, execute_node};
+pub use process::ProcessDriver;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{code:?}: {detail}")]

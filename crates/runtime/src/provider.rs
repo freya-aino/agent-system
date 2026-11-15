@@ -7,9 +7,9 @@
 //! Credentials exist only as `SecretRef` in configuration and are resolved by the
 //! broker at call time; they never enter a Unit, a Trace, a span or a sandbox.
 //!
-//! The HTTP (OpenAI-compatible) implementation lands with the service binaries,
-//! where the HTTP stack is already a dependency; M2 ships the seam plus the
-//! deterministic in-process provider.
+//! Two implementations live beside this seam: [`FakeProvider`] here, deterministic
+//! and in-process, and [`crate::http_provider::HttpProvider`], which speaks the
+//! OpenAI-compatible HTTP API.
 
 use agent_contracts::primitive::ModelRef;
 use agent_contracts::trace_event::ProviderMeta;
@@ -44,8 +44,12 @@ pub struct RateLimits {
     pub tpm: u64,
 }
 
-/// A resolved credential. Deliberately not `Debug`-printable in full and never
-/// serialisable.
+/// A resolved credential.
+///
+/// Deliberately **not** `Serialize` and not fully `Debug`-printable. That is the
+/// structural reason a credential cannot reach a sandbox, a `Trace` or an `Event`:
+/// no frame, span or record can hold one, so the guarantee does not rest on every
+/// call site remembering to leave it out.
 pub struct Secret(String);
 
 impl Secret {

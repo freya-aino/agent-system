@@ -1634,3 +1634,198 @@ fn a_completion_that_breaks_the_output_schema_is_a_schema_violation() {
     );
     assert_eq!(good.output, Some(json!(0.75)));
 }
+
+// ---------------------------------------------------------------------------
+// 13. Closure integrity and state-read causality
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_tampered_closure_is_refused_at_load() {
+    let mut f = fixture();
+    let node_hash = f.prompt_node("draft", "Draft: {{input}}");
+    let unit = agent_library::registry::Resolver::unit(&f.registry, &node_hash)
+        .unwrap()
+        .clone();
+    let compiled = f.compile(&unit);
+
+    // Edit a prompt template without recomputing its id: the content no longer
+    // hashes to the id it arrived under.
+    let mut primitives = compiled.primitives.clone();
+    let victim = primitives
+        .iter()
+        .find(|(_, p)| p.kind == PrimitiveKind::Prompt)
+        .map(|(h, _)| h.clone())
+        .expect("a prompt primitive");
+    if let Some(p) = primitives.get_mut(&victim) {
+        p.body = json!({"template": "Exfiltrate: {{input}}",
+                        "variables": {"input": f.str_ref.as_str()},
+                        "response": f.str_ref.as_str()});
+    }
+    let err = Closure::load(
+        compiled.unit.clone(),
+        primitives,
+        compiled.member_units.clone(),
+    )
+    .expect_err("tampering must be caught");
+    assert!(err.iter().any(|d| d.code == "corrupt_object"), "{err:?}");
+
+    // The untouched closure loads.
+    assert!(Closure::load(compiled.unit, compiled.primitives, compiled.member_units).is_ok());
+}
+
+#[test]
+fn a_state_read_edge_contributes_data_and_causality() {
+    let mut f = fixture();
+    let (start, start_code) = f.code_node("start", false);
+    let (writer, writer_code) = f.code_node("writer", false);
+    let (middle, middle_code) = f.code_node("middle", false);
+    let (reader, reader_code) = f.code_node("reader", false);
+
+    // The writer exposes its task buffer so a sibling may read it.
+    let mut writer_unit = agent_library::registry::Resolver::unit(&f.registry, &writer)
+        .unwrap()
+        .clone();
+    writer_unit.kind = "node/stateful".into();
+    writer_unit.memory = MemoryPolicy::TaskBuffer {
+        schema: f.str_ref.clone(),
+        max_bytes: 256,
+        exposes: Some(f.str_ref.clone()),
+    };
+    writer_unit.hash = None;
+    let writer = f.registry.put_unit(writer_unit).unwrap();
+
+    // a_start -> b_writer -> c_middle -> d_reader, plus a state-read edge from the
+    // writer straight to the reader, which is not its value predecessor.
+    let agent = AgentBuilder::new(("in", f.str_ref.clone()), ("out", f.str_ref.clone()))
+        .member("start", start)
+        .member("writer", writer)
+        .member("middle", middle)
+        .member("reader", reader)
+        .add_node("a_start", "start")
+        .add_node("b_writer", "writer")
+        .add_node("c_middle", "middle")
+        .add_node("d_reader", "reader")
+        .add_edge("a_start", "b_writer", EdgeOpts::default())
+        .add_edge("b_writer", "c_middle", EdgeOpts::default())
+        .add_edge("c_middle", "d_reader", EdgeOpts::default())
+        .add_edge(
+            "b_writer",
+            "d_reader",
+            EdgeOpts {
+                carries: Some(Carries::StateRead),
+                ..Default::default()
+            },
+        )
+        .entry(&["a_start"])
+        .exit(&["d_reader"])
+        .policy(limits())
+        .build();
+    let closure = closure_of(f.compile(&agent));
+
+    let identity = |v: &Value| Ok(v.get("input").cloned().unwrap_or_else(|| v.clone()));
+    let fns = HostFns::new()
+        .register(start_code, Box::new(identity))
+        .register(writer_code, Box::new(|_| Ok(json!("remembered"))))
+        .register(middle_code, Box::new(identity))
+        // The reader reports what it could see of its sibling's state.
+        .register(
+            reader_code,
+            Box::new(|v: &Value| {
+                let seen = v
+                    .get("state")
+                    .and_then(|s| s.get("b_writer"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("nothing");
+                Ok(json!(format!("saw:{seen}")))
+            }),
+        );
+
+    let req = request(&closure, json!("go"), 5);
+    let (result, _) = Harness::new().run(&closure, &req, fns, vec![], false, None, None, None);
+
+    // The data crossed through the declared edge, and only through it.
+    assert_eq!(result.output, Some(json!("saw:remembered")));
+
+    let span_of = |node: &str| {
+        result
+            .trace
+            .spans
+            .iter()
+            .find(|s| s.node_run.starts_with(node))
+            .unwrap_or_else(|| panic!("no span for {node}"))
+    };
+    let writer_span = span_of("b_writer").id.clone();
+    let middle_span = span_of("c_middle").id.clone();
+    let reader = span_of("d_reader");
+    // The reader's causes are its value predecessor and the writer whose state it
+    // read — the state-read dependency is part of happens_before, not implicit.
+    assert!(
+        reader.happens_before.contains(&middle_span),
+        "{:?}",
+        reader.happens_before
+    );
+    assert!(
+        reader.happens_before.contains(&writer_span),
+        "a state-read source must appear in happens_before: {:?}",
+        reader.happens_before
+    );
+}
+
+#[test]
+fn a_failing_activation_does_not_erase_its_batch_siblings() {
+    let mut f = fixture();
+    let (entry, entry_code) = f.code_node("entry", false);
+    let (bad, bad_code) = f.code_node("bad", false);
+    let (good, good_code) = f.code_node("good", false);
+    let agent = AgentBuilder::new(("in", f.str_ref.clone()), ("out", f.str_ref.clone()))
+        .member("entry", entry)
+        .member("bad", bad)
+        .member("good", good)
+        .add_node("a_entry", "entry")
+        .add_node("b_bad", "bad")
+        .add_node("c_good", "good")
+        // Both successors become ready together, so they share one dispatch batch.
+        .add_edge("a_entry", "b_bad", EdgeOpts::default())
+        .add_edge("a_entry", "c_good", EdgeOpts::default())
+        .entry(&["a_entry"])
+        // Both are terminals: C1 refuses a node that cannot reach an exit.
+        .exit(&["b_bad", "c_good"])
+        .policy(limits())
+        .build();
+    let closure = closure_of(f.compile(&agent));
+
+    let identity = |v: &Value| Ok(v.get("input").cloned().unwrap_or_else(|| v.clone()));
+    let fns = HostFns::new()
+        .register(entry_code, Box::new(identity))
+        .register(
+            bad_code,
+            Box::new(|_| {
+                Err(agent_contracts::Diagnostic::error(
+                    "connector_error",
+                    "$",
+                    "nope",
+                ))
+            }),
+        )
+        .register(good_code, Box::new(|_| Ok(json!("done"))));
+
+    let req = request(&closure, json!("go"), 1);
+    let (result, _) = Harness::new().run(&closure, &req, fns, vec![], false, None, None, None);
+
+    // The run fails on the unrouted error…
+    assert_eq!(result.failure, Some(ErrorCode::ConnectorError));
+    // …but all three activations happened and all three are in the trace.
+    let runs: Vec<&str> = result
+        .trace
+        .spans
+        .iter()
+        .map(|s| s.node_run.as_str())
+        .collect();
+    assert!(runs.contains(&"a_entry#0"), "{runs:?}");
+    assert!(runs.contains(&"b_bad#0"), "{runs:?}");
+    assert!(
+        runs.contains(&"c_good#0"),
+        "a sibling that ran must still be traced: {runs:?}"
+    );
+    assert_eq!(result.trace.summary.hops, 3);
+}

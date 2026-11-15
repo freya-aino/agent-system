@@ -1,16 +1,16 @@
 # Third-party dependencies (cap: 30 direct, workspace-wide)
 
-Adding one needs a spec change. Exceeding 30 needs owner approval first — never silently. Current set: **23**.
+Adding one needs a spec change. Exceeding 30 needs owner approval first — never silently. Current set: **24**.
 
 | # | Crate | Why |
 |---|-------|-----|
 | 1 | tokio | async runtime, timers, unix sockets (Firecracker API) |
 | 2 | futures | stream combinators |
 | 3 | bytes | zero-copy buffers |
-| 4 | hyper | HTTP server/client for MCP/A2A, providers and the Firecracker API |
+| 4 | hyper | HTTP server/client for MCP/A2A, the S1 API and the Firecracker API |
 | 5 | hyper-util | hyper server/client glue |
 | 6 | http-body-util | body handling |
-| 7 | rustls | TLS |
+| 7 | rustls | TLS, for the service listeners and for the provider client's transport |
 | 8 | tokio-rustls | async TLS |
 | 9 | serde | derive for the contract types |
 | 10 | serde_json | JSON (schemas, wire formats, canonical encoding input) |
@@ -27,14 +27,27 @@ Adding one needs a spec change. Exceeding 30 needs owner approval first — neve
 | 21 | toml | configuration files (`docs/stack.md`) |
 | 22 | tempfile | tests |
 | 23 | proptest | property tests for hashing, `Subsumes`, graph validation, schedulers, reducer algebra |
+| 24 | unicode-normalization | NFC verification in the canonical encoder (`hash.md`: strings are UTF-8 in NFC) |
 
 Built in-house, no crate: the JSON-Schema subset checker and `Subsumes`, the guard DSL, graph validation and the
 scheduler, the S3 client (SigV4 over hyper), the OpenAI-compatible provider client, MCP/A2A message handling,
 the Firecracker API client, statistics and optimisers, the Qdrant REST client, the in-process exact-search
-`VectorIndex` fallback, and static-asset serving for the dashboard.
+`VectorIndex` fallback, the host↔sandbox frame protocol, the PEM/base64 reader for TLS roots, and static-asset
+serving for the dashboard.
+
+**Why `unicode-normalization` rather than in-house (added 2026-11-16).** NFC is the one rule in `hash.md` that
+cannot be checked without the Unicode character database: it needs decomposition mappings, combining classes and
+composition exclusions, which are data, not logic. The alternative was to ship a generated table, which is the
+same data with worse provenance and no upstream for Unicode revisions. The encoder refuses non-NFC input rather
+than normalising it, so the crate is a validator, never a silent rewriter.
+
+**Why the provider client is synchronous (recorded 2026-11-16).** C2 is a deterministic step machine with no
+async runtime, and the Node contract is non-streaming by design (C1), so the provider client is a request/response
+JSON POST over `TcpStream`, with `rustls` for `https` and HTTP/1.1 framing written in-house. `tokio`/`hyper` and
+the async stack remain for the S1 and S2 listeners, where a server genuinely needs them.
 
 Frontend (`web/`): Svelte and Vite are npm dependencies, outside this cap, kept minimal and listed in
 `web/DEPS.md`.
 
-Headroom: 7. Likely first additions if needed: a compression crate for blobs, and a regex crate if the
+Headroom: 6. Likely first additions if needed: a compression crate for blobs, and a regex crate if the
 hand-written anchored matcher in the guard DSL and `Subsumes` proves insufficient.

@@ -13,6 +13,14 @@ agent-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+rustls.workspace = true
+
+# The sandbox guest: hosts one Instance inside its own process and asks the host
+# for every metered call, so no credential ever enters it.
+[[bin]]
+name = "agent-sandbox-host"
+path = "src/bin/agent-sandbox-host.rs"
+
 
 [dev-dependencies]
 # The library is a dev-dependency only: C2 depends on contracts and core at run
