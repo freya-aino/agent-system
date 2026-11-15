@@ -1,7 +1,7 @@
 # 15 — Deployment Front
 
 ## Purpose
-The service layer that exposes Swarms to the outside world. It is a **variable service**: the protocol it speaks is a pluggable adapter chosen by configuration, covering agent protocols (MCP, A2A) and optionally OpenAI-compatible endpoints (chat, document upload, ...). ACP is dropped (folded into A2A; stack.md). Every Swarm must be bindable to it (spec 07).
+The service layer that exposes Swarms to the outside world. It is a **variable service**: the protocol it speaks is a pluggable adapter chosen by configuration, covering agent protocols (MCP, A2A) and optionally OpenAI-compatible endpoints (chat, document upload, ...). ACP is dropped (folded into A2A; `docs/stack.md`). Every Swarm must be bindable to it (spec 07).
 
 ## Design
 One protocol-neutral core and thin protocol adapters:

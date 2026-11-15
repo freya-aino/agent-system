@@ -1,6 +1,6 @@
 # C12 observability
 
-Event/trace pipeline, one-way telemetry, kill-switch and drift signals. Depends only on `contracts/` (trace-event, store, bundle, hash, telemetry, types).
+Event/trace pipeline, one-way telemetry, kill-switch and drift signals. Depends only on `crates/contracts/specs/` (trace-event, store, bundle, hash, telemetry, types).
 
 ## Purpose
 Move traces and events from wherever they are produced to where they are consumed, without ever opening a write path from S1 into S2 and without leaking content from S2. Provide the signals S1 uses to keep lineages honest: shared-surface telemetry, drift, kill-switch status. Must work at any deployment location (laptop, container, Firecracker host, cloud) with pluggable transports.

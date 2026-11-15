@@ -73,4 +73,4 @@ State exposure: a Stateful Node declares `exposes: SchemaRef`; other Nodes in th
 
 ## Decisions (resolved, continued)
 - Nodes stay single-output. Streaming happens at the execution-graph level (spec 15).
-- Every Node has a README.md in its documentation record (excluded from the behaviour hash, spec 02), following `authoring/README.md`.
+- Every Node has a README.md in its documentation record (excluded from the behaviour hash, spec 02), following `docs/authoring/README.md`.

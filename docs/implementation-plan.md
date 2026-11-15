@@ -5,7 +5,7 @@ Goal: one working vertical slice end to end, then widen. Spec order rule stays: 
 ## Workspace (internal crates)
 ```
 crates/
-  contracts/    types from specs/contracts/ (serde types, canonical encoding trait)   no deps on others
+  contracts/    types from crates/contracts/specs/ (serde types, canonical encoding trait)   no deps on others
   core/         canonical encoding + SHA-256 hash, JSON-Schema subset + Subsumes, seeded RNG, stats (Distribution)
   library/      C1: primitives, Node, Agent, graph validate/compile, slot fit, standalone runner
   runtime/      C2: scheduler, limits, trace emission, driver trait + process driver
@@ -43,7 +43,7 @@ deploy/         docker-compose.yml (S1, S2, MinIO, Postgres, HelixDB, fake provi
 ## Risks to watch
 - Noisy fitness with few replicates (racing and paired seeds are essential).
 - Evaluator gaming (held-out and perturbed variants from M4).
-- Dependency cap: tracked in `deps.md`; notify before exceeding 30.
+- Dependency cap: tracked in `deps.md` (repo root); notify before exceeding 30.
 - Firecracker only on Linux with KVM; all earlier milestones run on the process driver.
 
 ## Decided

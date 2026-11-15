@@ -1,6 +1,6 @@
 # C10 — S1 Service (Evolution)
 
-Depends on: `contracts/` only (unit, hash, store, trace-event, bundle, task-class, types, driver, front, telemetry). Component internals of C4-C9, C12 are reached only through contract types and the interfaces named here as "plug-ins".
+Depends on: `crates/contracts/specs/` only (unit, hash, store, trace-event, bundle, task-class, types, driver, front, telemetry). Component internals of C4-C9, C12 are reached only through contract types and the interfaces named here as "plug-ins".
 
 ## Purpose
 Hosts Service 1: the API, the shard coordinator, the run-worker fleet, the job queue, budget accounting, the dashboard, and auth. It turns "evolve lineage X under budget B" into stateless run jobs, persists results through the Store contract, and surfaces everything (lineages, distributions, fronts, failures, promotions, drift) to humans. It is deployable anywhere: every backend is chosen by config.

@@ -1,6 +1,6 @@
 # C3 metrics
 
-Programmatic metric library over traces. Depends only on `contracts/` (unit, trace-event, hash, types; store for persistence of results).
+Programmatic metric library over traces. Depends only on `crates/contracts/specs/` (unit, trace-event, hash, types; store for persistence of results).
 
 ## Purpose
 Turn Traces (and checker outputs) into **fitness distributions** for Nodes, Agents and Swarms; compare candidates fairly; decide quality floors, Pareto fronts and right-sizing; and make metric gaming hard. Used by S1 for selection and by S2 for monitoring (same library, content-free inputs only in S2).

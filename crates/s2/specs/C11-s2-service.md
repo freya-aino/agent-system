@@ -1,6 +1,6 @@
 # C11 — S2 Service (Deployment)
 
-Depends on: `contracts/` only (bundle, task-class, trace-event, unit, hash, store, types, driver, front, telemetry). Executes Units through the `Driver` interface of driver.md (implemented by C2, treated as an external interface).
+Depends on: `crates/contracts/specs/` only (bundle, task-class, trace-event, unit, hash, store, types, driver, front, telemetry). Executes Units through the `Driver` interface of driver.md (implemented by C2, treated as an external interface).
 
 ## Purpose
 Service 2 is a **completely headless** serving layer. It pulls signed bundles from a registry, verifies them, and serves the advertised functions over standard protocols, routing each request to a locked lineage member. It is **select-only**: nothing mutates in prod, no external writes occur, and no inbound credentials exist. The only way out is one-way content-free telemetry. The only configuration surface is files and environment variables; there is no UI and no admin API that changes behaviour.

@@ -23,7 +23,7 @@ FunctionDescriptor {
 
 ## Presentation and documentation
 - **Stage labels**: each graph node may carry a user-facing label ("thinking", "searching law database", "summing up"). They are used to stream the execution graph of a request in live systems (spec 15) and live in the Agent's **presentation record**.
-- **README.md**: every Agent (and Node) gets a README that documents its function, schemas, Nodes used, policy limits, fitness kind and evaluation method, so that agents can replicate the structure when inventing new ones (`authoring/README.md`).
+- **README.md**: every Agent (and Node) gets a README that documents its function, schemas, Nodes used, policy limits, fitness kind and evaluation method, so that agents can replicate the structure when inventing new ones (`docs/authoring/README.md`).
 - Both are content-addressed and linked to the Unit but excluded from the behaviour hash (spec 02).
 
 ## Integration Agents

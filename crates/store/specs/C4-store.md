@@ -1,6 +1,6 @@
 # C4 store
 
-Implements `contracts/store.md`. Depends on: `hash.md`, `store.md`, `trace-event.md` (Event, no_sample), `types.md` (BlobRef, ShardId, Budget), `unit.md` (only as opaque payloads).
+Implements `crates/contracts/specs/store.md`. Depends on: `hash.md`, `store.md`, `trace-event.md` (Event, no_sample), `types.md` (BlobRef, ShardId, Budget), `unit.md` (only as opaque payloads).
 
 ## Purpose
 One storage layer for both services: immutable content-addressed objects, a genealogy graph, an append-only event log, and two isolated zones (`inbound`, `outbound`). It must run unchanged on local disk, object storage or a database, and scale horizontally by sharding writers per population.
