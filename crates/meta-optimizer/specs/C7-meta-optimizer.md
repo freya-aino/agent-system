@@ -1,85 +1,160 @@
-# C7 Meta-Optimizer (S1)
+# C7 — Meta-Optimizer (S1, layer 5)
 
-Depends on contracts only: unit, hash, trace-event, store, types.
+Depends on contracts: `types`, `hash`, `unit`, `trace-event`, `events`, `store`, `metric`, `archive`, `campaign`.
+Depends on components `core` (C0), `metrics` (C3), `archive` (C5), `optimizer` (C6) through its interfaces only,
+`store` (C4).
 
 ## Purpose
-The Meta-Optimizer is the L5 Unit above the Optimizer. It chooses what to evolve and how to spend a limited evaluation budget: which populations, which operators/configurations of the Optimizer, which seeds, which datasets and adversaries. The Optimizer supplies the mechanics (vary, evaluate, select); the Meta-Optimizer is the planner over many Optimizer runs. It cannot promote and has no write path to `outbound`; it can only ask the Optimizer for proposals, which then follow gates elsewhere.
+The L5 Unit above the Optimizer. It chooses *what* to evolve and *how much to spend*: which populations, which
+operators and Optimizer configurations, which seeds, datasets and adversaries. The Optimizer supplies the
+mechanics; the Meta-Optimizer is the planner over many Optimizer runs. It cannot promote and has no write path to
+`outbound`; it can only ask the Optimizer to emit a proposal, which then follows C9's gates.
 
 ## Owned data
-In zone `inbound`, per-population shard (one writer per shard; a Meta-Optimizer run is one writer of its own `meta_optimizer` shard).
-- `Campaign { id, goal, budget: Budget, populations, method_ref }` (`Budget` from types.md; `campaign_started`/`campaign_stopped` events).
-- `RewardVector` records (types.md `{components, weights_ref}`) per Optimizer run / subtree; components: metrics, cost, diversity, novelty. `weights_ref` points at the weights held in the Meta-Optimizer hash.
-- `ValueModel` snapshots (value function / surrogate / bandit state), stored as content-addressed objects (`put`), referenced by events.
-- `MetaOptimizerPolicy` = the Meta-Optimizer Unit itself (hashed), and its `BaselineRun` records (MCMC, GA, MCTS, GEPA, RL) on equal budget.
-- Decisions as events: `experiment_outcome` for every method step (with cost), `drift_detected` consumption notes, stopping decisions.
+In zone `inbound`, one writer per `meta_optimizer` shard.
+- `Campaign`, `OptimizerConfig`, `BaselineRun`, `ValueModel`, `SurrogateUse`, `Sentinel`, `StopPolicy` —
+  shapes in campaign.md; lifecycle in `campaign_started` / `campaign_stopped` events.
+- `RewardVector` records per Optimizer run and per subtree; components are quality metrics, cost, latency,
+  robustness under adversaries, diversity/novelty and subtree productivity. `weights_ref` points at weights held
+  inside the Meta-Optimizer Unit hash.
+- `MetaOptimizerPolicy` = the Meta-Optimizer Unit itself (hashed), and its baseline records on equal budget.
+- Decisions as events: an `experiment_outcome` per method step with its cost, drift consumption notes, stop
+  decisions with their evidence.
 
 ## Inputs / Outputs
-In: a Meta-Optimizer Unit (L5, `kind: meta_optimizer`; `members` = algorithm code, hyperparameters, learned parameters; `policy` = per-campaign Budget; reward weights hashed, per unit.md L4/L5 conventions), Optimizer Units, seeds, datasets; Traces and Events from Optimizer runs; `drift_detected` events.
-Out: Optimizer configurations (new Optimizer Units, new hash), seed/parent choices handed to the Optimizer, adversarial input sets (Units with `role: adversary`, never bundled), `experiment_outcome` events about campaigns, stop events, and requests that the Optimizer emit `promotion_proposed` for a candidate.
-Reads: genealogy via `lineage`, `children`, paged `query`, `subscribe`.
+In: a Meta-Optimizer Unit (L5, `kind: meta_optimizer`); Optimizer Units; seeds and datasets; Traces and Events
+from Optimizer runs; `drift_detected` and `sentinel_result` events.
+Out: new Optimizer Units (a reconfiguration is a new hash), seed and parent choices, adversarial input sets
+(Units with `role: adversary`, never bundled), campaign events, stop events, and requests that the Optimizer emit
+`promotion_proposed`.
+Reads: genealogy via `lineage`/`children`, paged `query`, `subscribe`.
 
 ## Method portfolio
-All are methods behind one interface, selectable per campaign; all must run on the same budget accounting.
+All are methods behind one interface, selected per campaign, all on the same budget accounting.
 
 ### MCMC baseline
-Metropolis-Hastings over Units: state = Unit hash; proposal = Optimizer operator (programmatic or LLM-proposed diff); target `pi(u) proportional to exp(beta * score(u))`.
-- **Reversibility**: needs proposal ratio q(u|u')/q(u'|u), recorded in `Provenance.proposal_ratio` where available. Programmatic operators with enumerable neighbourhoods can supply it; LLM-proposed diffs cannot, so the chain is a heuristic (stochastic hill climbing with acceptance) there. State this honestly; do not claim exactness.
-- **Noisy fitness: pseudo-marginal MCMC.** score is an estimate from n replicates; use an unbiased estimator of the likelihood-like target (and keep the estimate attached to the current state; do not re-draw it each step) so the chain targets the right marginal. Caveats: needs unbiased positive estimates; variance control by n; "sticky" chains when estimate variance is large; fitness bounded or logistic scores usually only approximately unbiased in exp(); correlated pseudo-marginal (shared seeds) reduces stickiness.
-- **Tempering**: parallel tempering across `beta` ladder, swapping states between chains; swap acceptance uses noisy scores (same pseudo-marginal rule). Annealing for pure optimization.
-- **Convergence diagnostics and caveats**: R-hat, ESS, trace plots rely on scalar summaries and assume ergodicity. On discrete structured spaces, scalar summaries (score, size) may hide poor mixing in structure; use several summaries (score, cost, structural hash features), multiple independent chains from dispersed seeds, and treat diagnostics as necessary, not sufficient. Multimodality and disconnected neighbourhoods (an operator may not reach some regions) make "converged" only relative to the operator graph. Non-stationarity from drift breaks stationarity assumptions.
-- Role: **baseline**, not the product. It is the reference every other method must beat.
+Metropolis–Hastings over Units: state = a Unit hash, proposal = an Optimizer operator, target
+`π(u) ∝ exp(β · score(u))`.
+- **Reversibility** needs `q(u|u')/q(u'|u)`, recorded in `Provenance.proposal_ratio` where the operator can
+  supply it. Programmatic operators with enumerable neighbourhoods can; LLM-proposed diffs cannot, so on those
+  the chain is stochastic hill climbing with an acceptance rule. This is stated in the record, not glossed:
+  a chain containing LLM proposals is marked `exact: false` and its diagnostics are read accordingly.
+- **Noisy fitness: pseudo-marginal MCMC.** The score is an estimate from `n` replicates; the estimate stays
+  attached to the current state rather than being re-drawn each step, so the chain targets the right marginal.
+  Caveats that are real and are not hidden: the estimator must be positive and unbiased, bounded scores in an
+  `exp()` are only approximately unbiased, high estimate variance makes chains sticky, and correlated
+  pseudo-marginal (shared seeds between current and proposed states) is used to reduce it.
+- **Tempering**: parallel tempering over a β ladder with the same pseudo-marginal rule for swaps; annealing for
+  pure optimisation.
+- **Diagnostics**: R-hat and ESS over several scalar summaries (score, cost, and structural hash features), from
+  at least 4 independent chains started from dispersed seeds. Diagnostics are necessary, not sufficient: on a
+  discrete structured space "converged" is only ever relative to the operator graph, and a disconnected region
+  the operators cannot reach will never show up as non-convergence.
+- Role: the **baseline**. Every other method must beat it on equal budget.
 
 ### GA / quality-diversity
-Population GA (selection, crossover with slot fit, mutation) is the Optimizer's default loop; the Meta-Optimizer configures it. QD: MAP-Elites / novelty search / CVT-MAP-Elites over behavioural descriptors (task-class region, cost, structure) to keep stepping stones; archive is C5 (reached only through store/Unit types). Island models across populations: Meta-Optimizer sets migration topology.
+Population GA (selection, slot-fit crossover, mutation) is the Optimizer's default loop; the Meta-Optimizer
+configures it. QD is MAP-Elites / CVT-MAP-Elites / novelty search over the behavioural descriptors of C5. Island
+models across populations: the Meta-Optimizer sets the migration topology within C5's bounds.
 
 ### RL with real and surrogate unrolls
-- State: campaign summary (archive stats, recent rewards, budget left); action: choose configuration, seeds, operator mix, parent set; reward: vector (below).
-- **Real unrolls**: run the Optimizer for k generations with real LLM evaluations; expensive, sparse.
-- **Surrogate-model unrolls**: a learned model predicts fitness (distribution) and outcome type from Unit features and past Traces; used for pre-screening and policy-learning. Caveats: surrogate must report uncertainty; surrogate-only reward is exploitable (the policy will find surrogate errors), so surrogate-predicted winners must be confirmed by real evaluation before they affect the value function; surrogate is retrained on real outcomes (including negative typed outcomes) and each use is event-logged with its model hash.
-- Policy gradient / PPO or contextual bandits for operator selection; Q-learning is not preferred given the sparse, non-stationary reward.
+- State: campaign summary (archive statistics, recent rewards, budget left). Action: configuration, seeds,
+  operator mix, parent set. Reward: the vector below.
+- **Real unrolls** run the Optimizer for k generations with real evaluations — expensive and sparse.
+- **Surrogate unrolls** use a learned model predicting the fitness distribution and the outcome type from Unit
+  features and past Traces. The surrogate must report uncertainty; a surrogate-predicted winner **must be
+  confirmed by a real evaluation before it affects the value function**, because a policy optimising against a
+  surrogate will find the surrogate's errors. The surrogate retrains on real outcomes including typed negative
+  ones, and every use is logged with the model hash (`surrogate_used`).
+- Policy gradient / PPO for the policy and contextual bandits for operator selection. Q-learning is not used: the
+  reward is sparse and non-stationary.
+- **Surrogate features are both** structural (graph shape, member counts, operator identity, parent descriptors)
+  and textual (embeddings of prompts and schemas from the pinned encoder). Structure alone misses prompt-quality
+  effects, which are most of what an LLM workflow's fitness depends on; text alone cannot see a topology change.
 
-### Subtree-level reward (Huxley-Goedel style)
-Value a Unit by the *expected future fitness of its descendants* (subtree-level productivity), not its own score. Estimated from the genealogy: aggregate descendant evaluations (`lineage` and `committed` events) with discounting and importance correction for how many descendants were actually evaluated; used to pick which parent to expand and as a reward for operator/parent selection. Caveats: biased towards intensively sampled subtrees; needs exploration bonus; estimate noisy early.
+### Subtree-level reward
+Value a Unit by the expected future fitness of its descendants, not its own score (C5 `SubtreeStats`), with
+discounting and an importance correction for how many descendants were actually evaluated. Used to pick which
+parent to expand and as a reward term. **Estimator under unequal sampling**: inverse-propensity weighting by the
+parent's sampling probability, with shrinkage toward the population mean (`shrinkage_n0 = 5`) and an exploration
+bonus `sqrt(2 ln N / n_u)`, so intensively mined subtrees do not simply dominate by having been mined.
 
 ### GEPA-style reflective mutation
-Use programmatic trace feedback (spans, checker failures, token/cost anomalies, failure outcome types) to prompt an LLM proposer for targeted edits; Pareto-front-based parent selection by instance. Realised as an Optimizer `llm_proposed` operator (diff in Provenance); the Meta-Optimizer allocates budget to it. Feedback to the proposer is programmatic only.
+Programmatic trace feedback prompts an LLM proposer for targeted edits, with Pareto-front-based parent selection
+per instance. Realised as the Optimizer's `llm_proposed` operator; the Meta-Optimizer allocates its budget. The
+feedback to the proposer is programmatic only.
 
 ### AFlow-style MCTS over workflows
-Tree search over Agent graph edits with operators as actions, UCT selection, evaluation by the Optimizer funnel. Included as a **benchmark baseline** (and as a candidate method), not as the default.
+Tree search over Agent graph edits, operators as actions, UCT selection, evaluation by the Optimizer funnel.
+Included as a benchmark baseline and a candidate method, not as the default.
 
 ## Reward
-- `RewardVector` (types.md) components: quality metrics per MetricRef, cost, latency, robustness under adversaries, diversity/novelty, subtree productivity.
-- `scalar = weights · components` (types.md) with weights in Meta-Optimizer Unit config (hashed, so reweighting is a new Meta-Optimizer). Quality floors are constraints, not weights. Pareto-based methods use the vector directly; the scalar is for RL and MCMC targets. Weight changes mid-campaign are new-Meta-Optimizer events, not silent.
+`RewardVector` components as above; `scalar = weights · components` with the weights inside the Meta-Optimizer
+Unit hash. Quality floors are constraints, never weights. Pareto-based methods use the vector; the scalar drives
+the MCMC target and the RL update. A reweighting mid-campaign is a new Meta-Optimizer Unit and a
+`campaign_stopped{reason: reweighted}` + `campaign_started` pair, never a silent edit.
 
-## Adversarial LLM generators
-Adversary Agents (`role: adversary`) generate hard/ambiguous/edge inputs against a candidate or the population; built from the same primitives and flagged. Rules: adversary output is just input data to the Optimizer's evaluation; adversary Units are never in a bundle's closure; they need their own Limits and cost accounting; generated inputs are stored by hash with generator Unit and seed, and their effect on selection is explicit (held-out adversarial split vs training adversaries, to avoid overfitting to the adversary). Adversary co-evolution is possible but off by default (arms-race collapse risk).
+**The MCMC target over a multi-objective problem** is the scalarised reward restricted to the feasible set:
+`score(u) = w·r(u)` if `u` satisfies every hard constraint and the quality floor, else `-∞` (rejected). Penalty
+functions were rejected — they let a chain trade a floor violation against cost, which is exactly what a floor is
+for. Multi-objective structure is preserved by running one chain per weight vector in a small simplex grid
+(default 8 vectors) and keeping the union of their frontiers, rather than by pretending one scalar is the whole
+problem.
+
+## Adversarial generators
+Adversary Agents (`role: adversary`) generate hard, ambiguous and edge inputs against a candidate or a
+population, built from the same primitives and flagged. Their output is input data to the Optimizer's
+evaluation, nothing more. They carry their own `Limits` and cost accounting; generated inputs are stored by hash
+with their generator Unit and seed; and their effect on selection is explicit through a **held-out adversarial
+split** separate from the training adversaries, so a candidate cannot overfit to the adversary that trained it.
+Adversary co-evolution is **off by default** (arms-race collapse risk) and, when enabled, is capped at one
+adversary generation per five subject generations.
 
 ## Stopping
-Stop a campaign when the **value function plateaus**: expected improvement over the next budget slice, per the value model with its uncertainty, falls below threshold for m consecutive checks, *and* a real-evaluation confirmation shows no Pareto advance. Also hard stops: budget exhausted, drift-induced re-baseline needed, explicit abort. All stops are events with the evidence behind them.
+A campaign stops when the **value function plateaus**: the expected improvement over the next budget slice, per
+the value model with its uncertainty, falls below `min_improvement` for `consecutive` checks **and** a real
+evaluation confirms no Pareto advance. Defaults: `window 5 generations`, `min_improvement 0.01` relative,
+`consecutive 3`, `confirm_with_real_eval: true`. Hard stops: budget exhausted, a drift-induced re-baseline, or an
+explicit abort. Every stop is an event carrying its evidence. Convergence is tracked per agent-family population
+and per pool, since they evolve independently.
 
 ## Non-stationarity (provider drift)
-Fitness of a fixed Unit changes when a provider changes model snapshot behaviour. Detect through `ProviderMeta` in spans and `drift_detected` events. Response: invalidate cached evaluations older than the drift, re-evaluate incumbents/baselines on current provider, restart pseudo-marginal chains' stored estimates, discount old data in the value model (forgetting factor), keep a rolling sentinel set (stable Units re-run periodically) as drift canaries. Old results are not deleted, only marked.
+A fixed Unit's fitness moves when a provider changes behaviour. Detection is C12's (`drift_detected`,
+`sentinel_result`). Response: invalidate cached evaluations older than the drift for the affected connection,
+re-evaluate incumbents and baselines on the current provider, restart the pseudo-marginal chains' stored
+estimates, apply a forgetting factor (default 0.9 per detected drift event) to the value model, and keep the
+sentinel set as a standing canary. Old results are marked, never deleted.
 
-## Self-application: the Meta-Optimizer is a Unit
+## Self-application
 - The Meta-Optimizer is an L5 Unit with `Limits`, hashed, and evolvable like any other.
-- Acceptance rule: **a Meta-Optimizer variant must beat the MCMC baseline on equal budget** (same tokens/cost, same datasets and seeds, paired comparison across multiple campaigns) to be adopted. Otherwise MCMC stays the default Meta-Optimizer. No claim to superiority without recorded paired evidence.
-- Fair accounting: Meta-Optimizer overhead (surrogate training, LLM proposers, planning calls) counts against the budget.
-- **Meta-Swarm question**: should the Meta-Optimizer itself be a Swarm, i.e. a population of Agents (planner, proposer, critic, adversary) with graph and slots, so that Meta-Optimizer strategies can be varied and recombined by the same operators? Pros: uniform tooling, evolvable portfolio. Cons: second-order noise, evaluation of a Meta-Optimizer needs whole campaigns (very expensive), risk of self-reinforcing bias. Recommended staging: keep L5 fixed hashed config + portfolio first, make sub-roles (proposer prompts, reward weights) evolvable, defer full meta-Swarm until baselines are stable.
+- **Adoption rule**: a variant replaces the default only after a paired comparison across at least 5 independent
+  campaigns at equal `Budget.cost` under one `PriceTable`, verdict `a_better` at alpha 0.05 after Holm
+  (campaign.md). Otherwise MCMC stays the default. Five campaigns is the smallest number at which a sign test can
+  reach p < 0.05; below that no claim is made.
+- Fair accounting: planning calls, surrogate training and LLM proposers all count against the campaign budget.
+- **Meta-Swarm staging.** The Meta-Optimizer is *not* made a Swarm of planner/proposer/critic Agents in this
+  version. Evaluating such a thing costs whole campaigns, the noise is second-order, and self-reinforcing bias is
+  hard to detect. Instead: keep L5 as a hashed config plus the method portfolio, make its **sub-roles**
+  (proposer prompts, reward weights, operator priors) evolvable now, and revisit the full meta-Swarm only once
+  the baselines are stable — the criterion being that the MCMC baseline's campaign-to-campaign variance is below
+  the margin the adoption rule needs.
 
 ## Interfaces
-- `plan(campaign) -> [OptimizerConfig, budget slice]`.
-- `run_campaign(campaign) -> CampaignOutcome` (events, stop reason).
-- `compare(meta_optimizer_a, meta_optimizer_b, budget) -> PairedResult`.
-- `request_promotion(candidate)` -> asks the Optimizer to emit `promotion_proposed`; the Meta-Optimizer never writes it itself.
-- `baselines(campaign)`: runs MCMC / GA / MCTS / GEPA at equal budget for reference.
+```
+plan(campaign) -> [OptimizerConfig]              // a budget slice each
+run_campaign(campaign) -> CampaignOutcome
+compare(meta_a, meta_b, budget) -> PairedComparison
+request_promotion(candidate)                     // asks C6 to emit promotion_proposed; never writes it itself
+baselines(campaign)                              // runs MCMC / GA / MCTS / GEPA at equal budget
+```
 
 ## Invariants
-- Every spend is bounded by `Limits`; every method step is an event with its cost.
+- Every spend is bounded by `Limits`; every method step is an event carrying its cost.
 - No write path to `outbound`; no promotion authority.
 - Surrogate predictions never substitute for real evaluation in promotion evidence.
-- Adversary Units and generated inputs are marked and never enter a bundle closure.
-- Equal-budget comparison is the only basis for adopting a method or a Meta-Optimizer variant.
-- Seeds recorded; stochastic decisions reproducible from `seed` and event log.
+- Adversary Units and the inputs they generate are marked and never enter a bundle closure.
+- Equal-budget comparison under one price table is the only basis for adopting a method or a variant.
+- Seeds are recorded; every stochastic decision is reproducible from the seed and the event log.
 - Reward weights and method config live in the hashed Meta-Optimizer Unit.
 
 ## Failure handling
@@ -87,27 +162,30 @@ Fitness of a fixed Unit changes when a provider changes model snapshot behaviour
 |---|---|
 | Optimizer shard unavailable | pause that population; no cross-shard writes |
 | surrogate diverges from real results | disable surrogate unrolls, log, retrain |
-| MCMC chain stuck (low acceptance, high variance estimates) | raise replicates, lower beta, widen proposals, log diagnostics |
+| MCMC chain stuck (low acceptance, high estimate variance) | raise replicates, lower β, widen proposals, log diagnostics |
 | diagnostics fail | continue; no promotion request based on that chain alone |
-| adversary generates invalid/degenerate inputs | programmatic input validators reject; stored as typed outcome |
-| budget breach | hard stop with `limit_exhausted` event |
+| adversary emits invalid or degenerate inputs | programmatic validators reject; stored as a typed outcome |
+| budget breach | hard stop with a `budget_exhausted` event |
 | drift mid-campaign | see non-stationarity; re-baseline |
 | noisy reward misranks | paired re-evaluation before any `request_promotion` |
 
-## Open questions
-- Which MCMC target score (scalar from vector) is principled for multi-objective problems?
-- Pseudo-marginal validity when fitness is a bounded score: acceptable approximations?
-- Subtree-reward estimator under unequal sampling.
-- How many campaigns are needed for a statistically meaningful "beats baseline" claim at realistic budgets?
-- Surrogate features: embeddings of Unit text, graph structure, or both?
-- Meta-Swarm staging (above); co-evolving adversaries.
-- Weight setting policy: owner-fixed vs adapted.
+## Decisions
+- **Feasible-set scalarisation for the MCMC target**, plus a simplex of weight vectors (above).
+- **Pseudo-marginal is used with its approximation stated**: bounded scores in `exp()` are approximately
+  unbiased, and the chain is marked accordingly rather than claimed exact.
+- **Subtree reward uses inverse-propensity weighting with shrinkage and an exploration bonus** (above).
+- **Five campaigns minimum** for a "beats baseline" claim (above).
+- **Surrogate features are structural and textual** (above).
+- **Weights are owner-fixed per Meta-Optimizer Unit**, not adapted online. An adapted weight would make the
+  objective itself a moving target, and every historical comparison incomparable. Changing weights is cheap —
+  it is a new Unit — so the restriction costs little.
+- **Which Swarm runs a Meta-Optimizer**: none. L4 and L5 Units are executed directly by S1's shard writer under
+  their own `Limits`, not hosted in a Swarm. Their "fitness" is the campaign outcome (Pareto advance per
+  `Budget.cost`), measured by the adoption rule, so no meta-Swarm is needed to evaluate them.
+- **Adversary co-evolution off by default**, capped when enabled (above).
 
-## Resolved by contracts
-`RewardVector`, `Distribution`, `Budget` (equal-budget accounting unit), L5 conventions, event kinds `campaign_stopped`/`surrogate_used`/`baseline_result`, `Provenance.proposal_ratio`, `lease`/`Fence`, `role: adversary`.
-
-## Contract gaps
-- `Campaign` has no contract type, and the `data` schemas of `campaign_started`, `campaign_stopped`, `baseline_result`, `surrogate_used` events are undefined.
-- No contract for a sentinel/canary evaluation set (stable Units re-run for drift detection).
-- Drift signal shape beyond the `drift_detected` kind: scope (provider, model, region) is unspecified.
-- `Budget.cost` is derived from the `PriceTable`, but cross-provider comparability of cost for "equal budget" is not specified.
+## Contracts used
+`campaign` (Campaign, OptimizerConfig, BaselineRun, ValueModel, SurrogateUse, Sentinel, StopPolicy, MethodRef),
+`types` (RewardVector, Budget, Distribution, PriceTable), `unit` (L5 conventions), `store` (lineage, children,
+query, subscribe, lease), `events` (campaign and surrogate kinds, `sentinel_result`), `metric`
+(PairedComparison), `archive` (SubtreeStats, descriptors).

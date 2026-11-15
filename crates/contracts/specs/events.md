@@ -1,56 +1,102 @@
 # Contract: Event data schemas
 
-`Event.kind` (trace-event.md) selects the schema of `Event.data`. This file is the **single registry**: a new kind is added here, in the same change as the component that emits it. Unknown kinds are stored but not interpreted.
+`Event.kind` (trace-event.md) selects the schema of `Event.data`. This file is the **single registry**: a new kind
+is added here, in the same change as the component that emits it. Unknown kinds are stored but not interpreted.
+Fields marked `[ix]` are indexed and may be used in `EventFilter.data` (store.md).
 
 ```
 // lineage / archive
-committed        { unit: HashId, evaluation: HashId, population: Population }
-retired          { unit: HashId, reason: string }
-quarantined      { unit: HashId, reason: string }
-pool_admitted    { pool: string, unit: HashId, rank: number }
-pool_evicted     { pool: string, unit: HashId, reason: string }
-elite_replaced   { archive: HashId, cell: string, old: HashId?, new: HashId, descriptor: map<string, number> }
+committed        { unit[ix]: HashId, evaluation: HashId, population: Population, generation: int }
+retired          { unit[ix]: HashId, reason: string, superseded_by: HashId? }
+quarantined      { unit[ix]: HashId, reason: string, source: "operator"|"gaming_alert"|"adversary"|"runtime" }
+pool_admitted    { pool[ix]: string, unit: HashId, rank: number, displaced: HashId? }
+pool_evicted     { pool[ix]: string, unit: HashId, reason: "cap"|"rank"|"quarantined"|"spec_change" }
+elite_replaced   { archive[ix]: HashId, cell: string, old: HashId?, new: HashId,
+                   descriptor: map<string, number>, comparison: HashId }   // PairedComparison object
+shard_split      { from[ix]: ShardId, to: [ShardId], at_seq: int, population: string }
 
 // experiments
 experiment_outcome { Outcome }                                   // trace-event.md
-generation       { population: Population, gen: int, evaluated: int, committed: int, cost: Budget }
-campaign_started { campaign: HashId, meta_optimizer: HashId, optimizer: HashId, budget: Budget, seeds: [HashId] }
-campaign_stopped { campaign: HashId, reason: "plateau"|"budget"|"manual"|"diverged", value: number? }
-baseline_result  { campaign: HashId, baseline: "mcmc"|"aflow"|"gepa"|string, evaluation: HashId, cost: Budget }
-surrogate_used   { campaign: HashId, model: HashId, predicted: number, actual: number? }
+funnel_stage     { unit[ix]: HashId, stage: "compile"|"node"|"agent"|"swarm", verdict: "pass"|"fail"|"skip",
+                   threshold: number?, observed: number?, cost: Budget }
+generation       { population[ix]: Population, gen: int, evaluated: int, committed: int, cost: Budget }
+campaign_started { campaign[ix]: HashId, meta_optimizer: HashId, optimizer_template: HashId, budget: Budget,
+                   seeds: [HashId], method: MethodRef, stop: StopPolicy }       // campaign.md
+campaign_stopped { campaign[ix]: HashId, reason: "plateau"|"budget"|"manual"|"diverged"|"reweighted",
+                   value: number?, confirmed_by_real_eval: bool }
+baseline_result  { BaselineRun }                                 // campaign.md
+surrogate_used   { SurrogateUse }                                // campaign.md
+sentinel_result  { sentinel[ix]: HashId, unit: HashId, evaluation: HashId, shift: number,
+                   verdict: "stable"|"shifted" }
+dataset_built    { dataset[ix]: HashId, kind, group: string, n_items: int, epsilon: number,
+                   sources: [HashId], sanitised: bool }
+region_refit     { router[ix]: HashId, encoder: HashId, regions: int, moved: int }
 
 // quality
-gaming_alert     { metric: MetricRef, unit: HashId, signal: string, evidence: [HashId] }
-calibration      { metric: MetricRef, judge: HashId, reference: MetricRef, agreement: number, n: int }
-metric_audit     { metric: MetricRef, findings: [string], held_out_gap: number? }
-drift_detected   { scope: { provider, model, region? }, signal: "identity"|"distribution"|"cost"|"behaviour", magnitude: number }
+gaming_alert     { GamingAlert }                                 // metric.md
+calibration      { CalibrationReport }                           // metric.md
+metric_audit     { MetricAuditReport }                           // metric.md
+drift_detected   { scope[ix]: { connection: Name, model_id: string, region: string? },
+                   signal: "identity"|"distribution"|"cost"|"behaviour",
+                   severity: "info"|"warn"|"critical",
+                   window: { from_seq: int, to_seq: int }, n: int,
+                   stat: { test: "fingerprint"|"ks"|"psi"|"cusum", value: number },
+                   baseline_ref: HashId, magnitude: number }
 
 // promotion / deployment
-promotion_proposed { unit: HashId, from: Population, evidence: [HashId] }
-gate_result      { proposal: HashId, gate: string, result: "pass"|"fail"|"inconclusive", evidence: [HashId] }
-approved|rejected  { proposal: HashId, actor: string, reason: string, scope: string }
-bundle_published { bundle: HashId, root: HashId }
-deployment_verified { bundle: HashId, instance: string, isolation: string }
-deployment_failed   { bundle: HashId, instance: string, step: string, error: string }
-rollout_stage    { deployment: HashId, from: DeployState, to: DeployState, share: number }
-rolled_back      { deployment: HashId, to: HashId, trigger: string }
-demoted          { deployment: HashId, trigger: string }
-cold_start       { bundle: HashId, region: HashId?, count: int, window: {from, to} }   // never includes descriptors or prompts
+promotion_proposed { unit[ix]: HashId, from: Population, baseline: HashId?, functions: [Name],
+                     gate_policy: HashId, rollout_plan: [{stage, share, min_requests, max_error_rate,
+                     min_quality}], evidence: [HashId] }
+gate_result      { proposal[ix]: HashId, gate: string, result: "pass"|"fail"|"inconclusive",
+                   statistic: number?, threshold: number?, n: int?, seed: int?, policy: HashId,
+                   evidence: [HashId] }
+approved         { proposal[ix]: HashId, actor: string, reason: string, scope: string,
+                   decision: "approve", policy_hash: HashId, expires: Timestamp? }
+rejected         { proposal[ix]: HashId, actor: string, reason: string, scope: string,
+                   decision: "reject", policy_hash: HashId }
+bundle_published { bundle[ix]: HashId, root: HashId, release_set: HashId?, key_id: string }
+deployment_verified { bundle[ix]: HashId, instance: string, isolation: string, driver: string }
+deployment_failed   { bundle[ix]: HashId, instance: string, step: string, error: ErrorCode, detail: string }
+rollout_stage    { deployment[ix]: HashId, from: DeployState, to: DeployState, share: number,
+                   trigger: "plan"|"threshold"|"config"|"operator" }
+rolled_back      { deployment[ix]: HashId, to: HashId, trigger: string }
+demoted          { deployment[ix]: HashId, trigger: string, to_state: DeployState }
+cold_start       { bundle[ix]: HashId, region: string, features: map<string, number>, count: int,
+                   window: {from_seq, to_seq} }    // region id or "none"; features only, never an embedding
 
 // safety / infra
-kill_switch      { scope: RevocationScope, reason: string, entry: int }
-budget_exhausted { scope: "campaign"|"generation"|"shard", ref: HashId, budget: Budget }
-infra_failure|provider_failure { component: string, detail: string, run: RunRef? }
-telemetry_gap    { source: string, from_seq: int, to_seq: int }
-scrub_violation  { source: string, field: string }
-observability_degraded { component: string, detail: string }
+kill_switch      { scope[ix]: RevocationScope, mode: "drain"|"stop", reason_code: string,
+                   entry: int, issued_by: string }
+budget_exhausted { scope[ix]: "campaign"|"generation"|"shard"|"experiment"|"lineage"|"global",
+                   ref: HashId, budget: Budget, spent: Budget }
+infra_failure    { component[ix]: string, detail: string, run: RunRef? }
+provider_failure { connection[ix]: Name, model_id: string, detail: string, status: int?, run: RunRef? }
+telemetry_gap    { source[ix]: string, from_seq: int, to_seq: int, dropped_estimate: int }
+scrub_violation  { source[ix]: string, field: string, scrubber_version: int, count: int }
+observability_degraded { component[ix]: string, detail: string }
+export_performed { policy[ix]: HashId, scope: string, records: int, sanitised: bool, dataset: HashId? }
 
 DeployState = shadow | canary | active | draining | retired | quarantined
 ```
+
+## Component payload schemas
+Shapes that travel inside an `Event.data` field, a `BlobRef` payload or an `Outcome.detail_ref` and are owned by one
+component. Registering a name here is the only extension mechanism (contracts README, rule 3).
+
+| Name | Owner | Appears in |
+|------|-------|-----------|
+| `CompileDiagnostics` | C1 library | `Outcome.detail_ref` for `compile_error` |
+| `NodeFailDetail` | C6 optimizer | `Outcome.detail_ref` for `node_fail` |
+| `OperatorDiff` | C6 optimizer | `Provenance.diff_ref` |
+| `ArchiveSpec`, `RebalanceProposal` | C5 archive | objects referenced by `elite_replaced`, `dataset_built` |
+| `ValueModel` | C7 meta-optimizer | object referenced by `surrogate_used` |
+| `GatePolicy` | C9 promotion | object referenced by `gate_result.policy` |
+| `FeedDefinition` | C12 observability | dashboard feeds; never leaves S1 |
 
 ## Seed manifest
 ```
 SeedSet  { id: HashId, seeds: [Seed] }
 Seed     { unit: HashId, purpose: string, functions: [string], evaluation: HashId, labels: [string] }
 ```
-Each seed is an `authored` Unit (`Provenance.source: authored`, no parent) and founds its own lineage and island. `committed` events for seeds carry the starting evaluation.
+Each seed is an `authored` Unit (`Provenance.source: authored`, no parent) and founds its own lineage and island.
+`committed` events for seeds carry the starting evaluation.
