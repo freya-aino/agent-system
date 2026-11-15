@@ -1,0 +1,19 @@
+[package]
+name = "agent-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "C0: canonical encoding + hashing, JSON-Schema subset + Subsumes, guard DSL, seeded RNG, statistics. Pure: no I/O, no clock, no global state."
+
+[dependencies]
+agent-contracts.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+rand_chacha.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

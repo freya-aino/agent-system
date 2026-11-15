@@ -1,0 +1,25 @@
+[workspace]
+resolver = "3"
+members = ["crates/contracts", "crates/core"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.98"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+agent-contracts = { path = "crates/contracts" }
+agent-core = { path = "crates/core" }
+
+serde = { version = "1", features = ["derive"] }
+# float_roundtrip: canonical hashing requires wire round-trips to preserve doubles
+# exactly; serde_json's default fast-path float parse is lossy.
+serde_json = { version = "1", features = ["float_roundtrip"] }
+sha2 = "0.10"
+rand_chacha = "0.9"
+thiserror = "2"
+proptest = "1"
+
+[profile.release]
+lto = "thin"

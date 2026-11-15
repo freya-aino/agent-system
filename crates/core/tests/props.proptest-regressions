@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 8b3ab9414a78cded06b4924c1d2599131f1e4eaa4dc28170735af27fae0b679a # shrinks to v = Object {"_": Number(517354415849746.44)}
+cc be39b77d7feafb138459017222bbb5e2b7eba53279845cec713d9491203bc430 # shrinks to (schema, values) = (Object { properties: {"a": Integer { minimum: Some(13), maximum: Some(14), multiple_of: Some(4) }}, required: {"a"}, additional: None }, [Object {"a": Number(16)}])
