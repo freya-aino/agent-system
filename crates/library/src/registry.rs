@@ -19,6 +19,10 @@ pub trait Resolver {
     /// Resolve a `SchemaRef` to its schema document (the body of a `schema`
     /// primitive whose hash is the ref).
     fn schema_document(&self, schema: &SchemaRef) -> Option<&serde_json::Value>;
+    /// The hash of the `schema` primitive carrying this document. Compile needs it
+    /// to put the document in the closure: a runtime that cannot resolve a port's
+    /// schema cannot validate what a node produced.
+    fn schema_owner(&self, schema: &SchemaRef) -> Option<HashId>;
 }
 
 #[derive(Default)]
@@ -26,9 +30,9 @@ pub struct InMemoryRegistry {
     primitives: BTreeMap<HashId, RegistryEntry>,
     units: BTreeMap<HashId, Unit>,
     aliases: BTreeMap<String, HashId>,
-    /// `SchemaRef` (canonical hash of a bare document) → the document, populated
-    /// whenever a `schema` primitive is put.
-    schemas: BTreeMap<SchemaRef, serde_json::Value>,
+    /// `SchemaRef` (canonical hash of a bare document) → the document and the hash
+    /// of the `schema` primitive carrying it, populated whenever one is put.
+    schemas: BTreeMap<SchemaRef, (HashId, serde_json::Value)>,
 }
 
 pub struct SearchQuery<'a> {
@@ -66,7 +70,7 @@ impl InMemoryRegistry {
             && let Some(doc) = primitive.body.get("document")
         {
             let schema_ref = crate::primitive::schema_ref_of(doc).map_err(|d| vec![d])?;
-            self.schemas.insert(schema_ref, doc.clone());
+            self.schemas.insert(schema_ref, (hash.clone(), doc.clone()));
         }
         self.primitives
             .entry(hash.clone())
@@ -198,7 +202,7 @@ impl Resolver for InMemoryRegistry {
     }
 
     fn schema_document(&self, schema: &SchemaRef) -> Option<&serde_json::Value> {
-        if let Some(doc) = self.schemas.get(schema) {
+        if let Some((_, doc)) = self.schemas.get(schema) {
             return Some(doc);
         }
         // Fallback: the ref may be a schema primitive's own hash.
@@ -207,5 +211,14 @@ impl Resolver for InMemoryRegistry {
             return None;
         }
         e.primitive.body.get("document")
+    }
+
+    fn schema_owner(&self, schema: &SchemaRef) -> Option<HashId> {
+        if let Some((owner, _)) = self.schemas.get(schema) {
+            return Some(owner.clone());
+        }
+        // The ref may be a schema primitive's own hash.
+        let e = self.primitives.get(schema)?;
+        (e.primitive.kind == PrimitiveKind::Schema).then(|| schema.clone())
     }
 }

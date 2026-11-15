@@ -84,6 +84,20 @@ pub fn compile(
     })
 }
 
+/// Put the `schema` primitive carrying this ref into the closure, if it resolves.
+/// A ref that does not resolve is reported by `validate`, not here.
+fn collect_schema(
+    schema: &agent_contracts::SchemaRef,
+    resolver: &dyn Resolver,
+    primitives: &mut BTreeMap<HashId, Primitive>,
+) {
+    if let Some(owner) = resolver.schema_owner(schema)
+        && let Some(p) = resolver.primitive(&owner)
+    {
+        primitives.insert(owner, p.clone());
+    }
+}
+
 fn collect(
     unit: &Unit,
     resolver: &dyn Resolver,
@@ -129,11 +143,58 @@ fn collect(
                 primitives.insert(h.clone(), p.clone());
                 prim_stack.extend(p.deps.iter().cloned());
             }
-            // Channel schema documents ride along as schema primitives when present.
-            if let Some(doc) = resolver.schema_document(&c.schema) {
-                let _ = doc; // document reachable through the resolver at run time
-            }
+            collect_schema(&c.schema, resolver, primitives);
         }
+    }
+    // Schema documents travel with the closure: an executor that cannot resolve a
+    // port's schema cannot validate what a node produced, and silently skipping
+    // validation is worse than failing to compile.
+    for port in unit.interface.inputs.iter().chain(&unit.interface.outputs) {
+        collect_schema(&port.schema, resolver, primitives);
+    }
+    for f in &unit.functions {
+        collect_schema(&f.input, resolver, primitives);
+        collect_schema(&f.output, resolver, primitives);
+    }
+    for binding in unit.connectors.values() {
+        collect_schema(&binding.schema, resolver, primitives);
+    }
+    if let agent_contracts::unit::MemoryPolicy::TaskBuffer {
+        schema, exposes, ..
+    } = &unit.memory
+    {
+        collect_schema(schema, resolver, primitives);
+        if let Some(e) = exposes {
+            collect_schema(e, resolver, primitives);
+        }
+    }
+    // Schemas named inside primitive bodies (prompt variables and response, tool
+    // input and output) are part of the same closure.
+    let body_schemas: Vec<HashId> = primitives
+        .values()
+        .flat_map(|p| match p.kind {
+            agent_contracts::primitive::PrimitiveKind::Prompt => {
+                let mut refs: Vec<HashId> = Vec::new();
+                if let Ok(b) =
+                    serde_json::from_value::<agent_contracts::primitive::PromptBody>(p.body.clone())
+                {
+                    refs.extend(b.variables.into_values());
+                    refs.push(b.response);
+                }
+                refs
+            }
+            agent_contracts::primitive::PrimitiveKind::Tool => {
+                match serde_json::from_value::<agent_contracts::primitive::ToolBody>(p.body.clone())
+                {
+                    Ok(b) => vec![b.input, b.output],
+                    Err(_) => vec![],
+                }
+            }
+            _ => vec![],
+        })
+        .collect();
+    for r in body_schemas {
+        collect_schema(&r, resolver, primitives);
     }
     while let Some(h) = prim_stack.pop() {
         if primitives.contains_key(&h) {

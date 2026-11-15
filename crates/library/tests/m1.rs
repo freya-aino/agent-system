@@ -464,3 +464,58 @@ fn registry_closure_and_status() {
         "fey"
     ));
 }
+
+#[test]
+fn compiled_closures_carry_their_schema_documents() {
+    // Without the port, channel and prompt-body schema documents in the closure, an
+    // executor cannot validate node output and silently skips the check.
+    let s = build_agent();
+    let pt = price_table();
+    let opts = ValidateOptions {
+        price_table: Some(&pt),
+        build_request: false,
+    };
+    let compiled =
+        agent_library::compile::compile(&s.agent, &s.registry, Hashing::On, &opts).unwrap();
+
+    let documents: Vec<&serde_json::Value> = compiled
+        .primitives
+        .values()
+        .filter(|p| p.kind == PrimitiveKind::Schema)
+        .filter_map(|p| p.body.get("document"))
+        .collect();
+    assert!(
+        !documents.is_empty(),
+        "no schema document reached the closure"
+    );
+
+    // Every port schema of the agent and of each member Node resolves inside it.
+    let resolvable = |r: &HashId| {
+        compiled.primitives.values().any(|p| {
+            p.kind == PrimitiveKind::Schema
+                && p.body.get("document").is_some_and(|d| {
+                    agent_library::primitive::schema_ref_of(d).ok().as_ref() == Some(r)
+                })
+        })
+    };
+    for port in s
+        .agent
+        .interface
+        .inputs
+        .iter()
+        .chain(&s.agent.interface.outputs)
+    {
+        assert!(
+            resolvable(&port.schema),
+            "agent port schema missing from the closure"
+        );
+    }
+    for unit in compiled.member_units.values() {
+        for port in unit.interface.inputs.iter().chain(&unit.interface.outputs) {
+            assert!(
+                resolvable(&port.schema),
+                "member port schema missing from the closure"
+            );
+        }
+    }
+}
