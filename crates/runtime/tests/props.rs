@@ -312,6 +312,7 @@ fn run_with_permutation(closure: &Closure, seed: u64, responses: &[(&str, &str)]
         flags: RunFlags::default(),
         budget: Budget::default(),
         job_ref: None,
+        class: Default::default(),
     };
     let opts = RunOptions::new(&cost);
     let result = execute(
@@ -401,6 +402,7 @@ proptest! {
             flags: RunFlags::default(),
             budget: Budget::default(),
             job_ref: None,
+            class: Default::default(),
         };
         let mut opts = RunOptions::new(&cost);
         opts.limits = Some(Limits { max_tokens: Some(ceiling), ..limits() });
@@ -463,6 +465,7 @@ fn a_different_clock_changes_only_timestamps() {
         flags: RunFlags::default(),
         budget: Budget::default(),
         job_ref: None,
+        class: Default::default(),
     };
     let opts = RunOptions::new(&cost);
     let slow = execute(

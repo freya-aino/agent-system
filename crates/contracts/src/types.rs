@@ -424,6 +424,50 @@ pub struct PriceEntry {
     pub out_per_mtok: String,
 }
 
+/// Scheduling priority *and* storage policy in one field (`types.md`).
+///
+/// `FrontFacing` is a request a client is waiting on and is the only class with a
+/// latency guarantee. `InternalEval` is the system evaluating itself on the live
+/// system; `Shadow` is a discarded mirror of a front-facing request. Both of the
+/// latter are preemptible and store no payloads.
+///
+/// The class is assigned by the service that admits the run, never by a caller, and
+/// it can only be lowered. `InternalEval` is the default precisely because a run
+/// that does not say it is serving a client must not inherit a client's priority.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RunClass {
+    /// Ordered last deliberately: `Ord` is priority order, lowest first.
+    #[default]
+    InternalEval,
+    Shadow,
+    FrontFacing,
+}
+
+impl RunClass {
+    /// Whether a run of this class may have payload bytes stored for it at all
+    /// (`store.md`: live evaluation keeps nothing).
+    pub fn may_store_payloads(self) -> bool {
+        matches!(self, RunClass::FrontFacing)
+    }
+
+    /// Whether the scheduler may stop this run to give capacity back to
+    /// front-facing traffic (C2).
+    pub fn is_preemptible(self) -> bool {
+        !matches!(self, RunClass::FrontFacing)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RunClass::FrontFacing => "front_facing",
+            RunClass::InternalEval => "internal_eval",
+            RunClass::Shadow => "shadow",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobRef {
     pub id: String,
@@ -520,6 +564,9 @@ pub enum ErrorCode {
     ProviderError,
     InfraError,
     Killed,
+    /// An `internal_eval` or `shadow` run stopped to give capacity back to
+    /// front-facing traffic. Recorded, never counted against fitness.
+    Preempted,
     // build / verification
     CorruptObject,
     UnknownParent,

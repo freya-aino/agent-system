@@ -88,6 +88,38 @@ impl<B: Backend, C: Clock> Store<B, C> {
         Ok(())
     }
 
+    /// Whether any payload may be stored for this owner at all.
+    ///
+    /// Two independent reasons, both one-way: the `no_sample` flag, and a run class
+    /// that keeps nothing — `internal_eval` and `shadow` runs are the system
+    /// evaluating itself on the live system, and their evaluation is the metric, not
+    /// the data (store.md).
+    pub async fn payloads_forbidden(&self, zone: Zone, owner: &HashId) -> Result<bool> {
+        if self.is_no_sample(zone, owner).await? {
+            return Ok(true);
+        }
+        Ok(self
+            .owner_trace(zone, owner)
+            .await?
+            .is_some_and(|t| !t.class.may_store_payloads()))
+    }
+
+    /// The owner's own bytes, when the owner is a Trace. Authoritative: an index
+    /// marker that was never written cannot let a payload through.
+    async fn owner_trace(
+        &self,
+        zone: Zone,
+        owner: &HashId,
+    ) -> Result<Option<agent_contracts::trace_event::Trace>> {
+        let Some(bytes) = self.backend.blob_get(&object_key(zone, owner)).await? else {
+            return Ok(None);
+        };
+        let Some(json) = bytes.strip_prefix(b"trace:") else {
+            return Ok(None);
+        };
+        Ok(serde_json::from_slice(json).ok())
+    }
+
     pub async fn is_no_sample(&self, zone: Zone, owner: &HashId) -> Result<bool> {
         if !self
             .backend
@@ -100,17 +132,10 @@ impl<B: Backend, C: Clock> Store<B, C> {
         // The owner's own bytes are authoritative: a Trace carries the flag, so a
         // marker that was never written (an index loss, a foreign writer) cannot
         // let a payload through.
-        let Some(bytes) = self.backend.blob_get(&object_key(zone, owner)).await? else {
-            return Ok(false);
-        };
-        let Some(json) = bytes.strip_prefix(b"trace:") else {
-            return Ok(false);
-        };
-        let trace: agent_contracts::trace_event::Trace = match serde_json::from_slice(json) {
-            Ok(t) => t,
-            Err(_) => return Ok(false),
-        };
-        Ok(trace.flags.no_sample)
+        Ok(self
+            .owner_trace(zone, owner)
+            .await?
+            .is_some_and(|t| t.flags.no_sample))
     }
 
     /// Chunks, stores and registers a blob. Refused with `PayloadForbidden` when the
@@ -125,7 +150,7 @@ impl<B: Backend, C: Clock> Store<B, C> {
     ) -> Result<BlobRef> {
         self.require_write(zone)?;
         if let Some(owner) = owner
-            && self.is_no_sample(zone, owner).await?
+            && self.payloads_forbidden(zone, owner).await?
         {
             return Err(StoreError::PayloadForbidden {
                 owner: owner.clone(),

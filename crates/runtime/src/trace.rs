@@ -12,7 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use agent_contracts::trace_event::{
     CheckerVerdict, Completion, ContentFreeSummary, FailureKind, Span, Trace, TraceStatus,
 };
-use agent_contracts::types::{Budget, HashId, JobRef, Name, SpanId, TaskId, VariantRef, Version};
+use agent_contracts::types::{
+    Budget, HashId, JobRef, Name, RunClass, SpanId, TaskId, VariantRef, Version,
+};
 use agent_contracts::unit::RunFlags;
 
 pub struct TraceBuilder {
@@ -21,6 +23,8 @@ pub struct TraceBuilder {
     seed: i64,
     price_table: HashId,
     flags: RunFlags,
+    /// The class the run was admitted under; recorded, never raised.
+    class: RunClass,
     job_ref: Option<JobRef>,
     evaluation: Option<HashId>,
     variant: Option<VariantRef>,
@@ -46,6 +50,7 @@ impl TraceBuilder {
     ) -> Self {
         TraceBuilder {
             run_id: run_id.to_owned(),
+            class: RunClass::default(),
             unit,
             seed,
             price_table,
@@ -142,6 +147,13 @@ impl TraceBuilder {
         self.spans.push(span);
     }
 
+    /// Set from the `RunRequest`: the runtime never raises a class, and a run that
+    /// did not come from a serving front keeps the default `internal_eval`.
+    pub fn class(mut self, class: RunClass) -> Self {
+        self.class = class;
+        self
+    }
+
     pub fn spans(&self) -> &[Span] {
         &self.spans
     }
@@ -182,6 +194,7 @@ impl TraceBuilder {
             workspace_ref: self.workspace_ref,
             connector_versions: self.connector_versions,
             price_table: self.price_table,
+            class: self.class,
             status,
             failure,
             spans: self.spans,

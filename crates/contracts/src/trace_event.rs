@@ -35,6 +35,10 @@ pub struct Trace {
     pub status: TraceStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<FailureKind>,
+    /// The class the run actually executed under; never raised, so a Trace cannot
+    /// claim a priority the run did not have.
+    #[serde(default)]
+    pub class: crate::types::RunClass,
     pub spans: Vec<Span>,
     pub verdicts: Vec<CheckerVerdict>,
     pub summary: ContentFreeSummary,
@@ -61,6 +65,8 @@ pub enum FailureKind {
     ProviderError,
     InfraError,
     Killed,
+    /// Stopped to give capacity back to front-facing traffic (C2, C11).
+    Preempted,
 }
 
 impl FailureKind {
@@ -73,6 +79,7 @@ impl FailureKind {
             ErrorCode::ProviderError => FailureKind::ProviderError,
             ErrorCode::InfraError => FailureKind::InfraError,
             ErrorCode::Killed => FailureKind::Killed,
+            ErrorCode::Preempted => FailureKind::Preempted,
             _ => return None,
         })
     }
@@ -88,6 +95,7 @@ impl From<FailureKind> for ErrorCode {
             FailureKind::ProviderError => ErrorCode::ProviderError,
             FailureKind::InfraError => ErrorCode::InfraError,
             FailureKind::Killed => ErrorCode::Killed,
+            FailureKind::Preempted => ErrorCode::Preempted,
         }
     }
 }
@@ -305,12 +313,14 @@ pub enum OutcomeKind {
     BudgetExhausted,
     EliminatedEarly,
     InfraError,
+    /// An internal evaluation run stopped so a client would not wait (C2, C11).
+    Preempted,
 }
 
 impl OutcomeKind {
     /// Infra failures never count against a candidate's fitness.
     pub fn counts_against_fitness(self) -> bool {
-        !matches!(self, OutcomeKind::InfraError)
+        !matches!(self, OutcomeKind::InfraError | OutcomeKind::Preempted)
     }
 }
 

@@ -205,6 +205,7 @@ fn request(closure: &Closure, input: Value, seed: i64) -> RunRequest {
         flags: RunFlags::default(),
         budget: Budget::default(),
         job_ref: None,
+        class: Default::default(),
     }
 }
 

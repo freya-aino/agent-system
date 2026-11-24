@@ -330,6 +330,8 @@ pub fn replay<C: Clock, E: Executor>(
         flags: trace.flags,
         budget: agent_contracts::types::Budget::default(),
         job_ref: trace.job_ref.clone(),
+        // Replay reproduces the recorded run, including the class it ran under.
+        class: trace.class,
     };
     let mut opts = RunOptions::new(cost);
     opts.limits = Some(limits);

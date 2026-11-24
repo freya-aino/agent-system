@@ -155,6 +155,7 @@ pub fn execute<D: Driver, C: Clock, E: Executor>(
         opts.cost.table().clone(),
         req.flags,
     )
+    .class(req.class)
     .job_ref(req.job_ref.clone())
     .evaluation(opts.evaluation.clone())
     .variant(opts.variant.clone())
@@ -1222,6 +1223,7 @@ fn checkpoint_of(
         seed: req.seed,
         limits_remaining: limit.remaining(),
         hash_spec: 1,
+        class: req.class,
     }
 }
 
@@ -1287,6 +1289,8 @@ pub fn resume<D: Driver, C: Clock, E: Executor>(
         flags: Default::default(),
         budget: Budget::default(),
         job_ref: None,
+        // A resumed run keeps the class it was admitted under.
+        class: checkpoint.class,
     };
     let mut opts2 = RunOptions {
         cost: opts.cost,

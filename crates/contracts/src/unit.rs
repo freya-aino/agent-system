@@ -436,6 +436,10 @@ pub struct Checkpoint {
     pub seed: i64,
     pub limits_remaining: Limits,
     pub hash_spec: u32,
+    /// Travels with the checkpoint: a preempted internal run resumes as the class
+    /// it was admitted under, and a migrated front-facing run is not demoted.
+    #[serde(default)]
+    pub class: crate::types::RunClass,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -450,6 +454,10 @@ pub struct RunRequest {
     pub budget: Budget,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job_ref: Option<crate::types::JobRef>,
+    /// Priority and storage policy (`types.md`). Defaults to the unprivileged
+    /// class: only a serving front may mark a run `front_facing`.
+    #[serde(default)]
+    pub class: crate::types::RunClass,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

@@ -1325,6 +1325,62 @@ async fn a_torn_batch_is_discarded_on_open() {
     assert_eq!(s.verify_chain(Zone::Inbound, SHARD).await.unwrap(), 1);
 }
 
+/// Live evaluation keeps the metric, never the data: an `internal_eval` or `shadow`
+/// run may store no payload, whatever its `no_sample` flag says.
+#[tokio::test]
+async fn live_evaluation_runs_may_not_store_payloads() {
+    let (s, _c) = store("w1");
+    let trace = |class: &str| {
+        json!({
+            "run_id": format!("r-{class}"),
+            "unit": format!("sha256:{}", "ab".repeat(32)),
+            "seed": 1,
+            "connector_versions": {},
+            "price_table": format!("sha256:{}", "cd".repeat(32)),
+            "status": "complete",
+            "class": class,
+            "spans": [],
+            "verdicts": [],
+            "summary": { "tokens": 0, "wall_ms": 0, "cost": 0.0, "probe_cost": 0.0, "hops": 0,
+                         "loop_iterations": 0, "completion": "output" },
+            // `no_sample` is false: the class alone must forbid the payload.
+            "flags": { "no_sample": false }
+        })
+    };
+    for class in ["internal_eval", "shadow"] {
+        let bytes = canon::canonicalize(DomainTag::Trace, &trace(class)).unwrap();
+        let owner = s.put(Zone::Inbound, &bytes).await.unwrap();
+        assert!(!s.is_no_sample(Zone::Inbound, &owner).await.unwrap());
+        assert!(s.payloads_forbidden(Zone::Inbound, &owner).await.unwrap());
+        let refused = s
+            .put_blob(
+                Zone::Inbound,
+                b"the prompt and the completion",
+                BlobClass::Payload,
+                Retention::new(RetentionClass::Standard),
+                Some(&owner),
+            )
+            .await;
+        assert!(
+            matches!(refused, Err(StoreError::PayloadForbidden { .. })),
+            "{class} runs keep nothing, got {refused:?}"
+        );
+    }
+    // A front-facing run is the only class that may keep a payload.
+    let bytes = canon::canonicalize(DomainTag::Trace, &trace("front_facing")).unwrap();
+    let owner = s.put(Zone::Inbound, &bytes).await.unwrap();
+    assert!(!s.payloads_forbidden(Zone::Inbound, &owner).await.unwrap());
+    s.put_blob(
+        Zone::Inbound,
+        b"kept",
+        BlobClass::Payload,
+        Retention::new(RetentionClass::Standard),
+        Some(&owner),
+    )
+    .await
+    .unwrap();
+}
+
 /// The SPI promises `Send` futures so a service can spawn work holding a store;
 /// that is only true while no lock is held across an `await`, so the build checks it.
 #[tokio::test]
