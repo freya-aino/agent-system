@@ -1,0 +1,65 @@
+# The compose stack (docs/stack.md). What is here is what exists: Postgres for the
+# event log, leases and the graph CTEs; Garage for objects and blobs; Qdrant for the
+# vector index that C5/C8 will fill. The S1 and S2 services and the fake provider
+# join this file with their own milestones (M4 onwards).
+#
+# Host ports are offset by 50000 (Postgres 55432, Garage 59000, Qdrant 56333) so the
+# stack coexists with whatever else is running on a development machine.
+#
+#   docker compose -f deploy/docker-compose.yml up -d
+#   sh deploy/garage-init.sh          # layout, bucket and the dev access key
+#   cargo test -p agent-store --features postgres,s3 -- --ignored --test-threads=1
+#
+# The store applies its own schema (`PostgresBackend::migrate`, which embeds
+# store-schema.sql), so nothing here has to be seeded by hand.
+
+name: agent-system
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: agent
+      POSTGRES_DB: agent
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent -d agent"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  garage:
+    image: dxflrs/garage:v1.0.1
+    # Garage needs its layout, bucket and access key set up once; the init script
+    # does all three and is idempotent.
+    volumes:
+      - ./garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    ports:
+      - "59000:3900"
+      - "59003:3903"
+    healthcheck:
+      test: ["CMD", "/garage", "status"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # The VectorIndex backend (C5 descriptors, C8 task-class regions). Present so the
+  # stack is one file; nothing writes to it before M5.
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "56333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+
+volumes:
+  postgres-data:
+  garage-meta:
+  garage-data:
+  qdrant-data:

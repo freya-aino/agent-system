@@ -22,14 +22,14 @@ contracts except where noted.
 ## Services and backends
 | Need | Choice | Notes |
 |------|--------|-------|
-| Objects, blobs, bundles | **S3-compatible object storage** (MinIO in compose) | `store.md` object and blob classes |
+| Objects, blobs, bundles | **S3-compatible object storage** (Garage in compose) | `store.md` object and blob classes |
 | Event log, shard leases, job queue, registry index, control DB | **Postgres** | compare-and-set append on `(shard, seq)`; leases with a fencing epoch. This is the default profile for an arbitrary location (C10) |
 | Graph queries (genealogy, subtree credit) | **Postgres: recursive CTEs** | a rebuildable projection of the event log (C4, C5) |
 | Vector queries (archive descriptors, task-class regions and priors) | **Qdrant**, reached over its REST API | a separate compose service behind the `VectorIndex` trait (C5, C8); also a rebuildable projection |
 | Isolation (prod) | **Firecracker** via jailer | `driver.md`, `isolation_level: microvm` |
 | Isolation (dev/CI) | process and container drivers | declared level; a weaker driver in prod needs a logged override, and the accepted prod fallback is gVisor/Kata-class only (C11) |
 | External protocols | **MCP and A2A over HTTP** | adapter mappings in `front.md`. ACP is dropped: it was folded into A2A. An OpenAI-compatible adapter stays optional |
-| Test / dev / simulation | **docker compose** | S1, S2, MinIO, Postgres, and the fake provider |
+| Test / dev / simulation | **docker compose** | S1, S2, Garage, Postgres, and the fake provider |
 
 **Vector search is Qdrant; graph search stays in Postgres.** The two needs are different: genealogy and subtree
 credit are recursive traversals that Postgres does well, while descriptor-space and task-class-region search is

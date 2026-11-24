@@ -49,5 +49,13 @@ the async stack remain for the S1 and S2 listeners, where a server genuinely nee
 Frontend (`web/`): Svelte and Vite are npm dependencies, outside this cap, kept minimal and listed in
 `web/DEPS.md`.
 
+**Activated by C4 (2026-11-24), none new.** The store uses `tokio`, `tokio-postgres`,
+`postgres-types`, `hyper`, `hyper-util`, `http-body-util`, `bytes`, `tokio-rustls`,
+`rustls` and `tempfile` (tests) — all already on the list above. The Postgres and S3
+backends are behind the `postgres` and `s3` cargo features, so the single-binary dev
+profile and the test suite build without them. The S3 client is in-house as planned:
+SigV4 and HMAC-SHA256 over `sha2` here, HTTP/1.1 framing by `hyper`, TLS by
+`tokio-rustls`. The compose object store is **Garage**, not MinIO (`docs/stack.md`).
+
 Headroom: 6. Likely first additions if needed: a compression crate for blobs, and a regex crate if the
 hand-written anchored matcher in the guard DSL and `Subsumes` proves insufficient.

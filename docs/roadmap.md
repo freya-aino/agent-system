@@ -25,7 +25,7 @@ crates/
   s2/             C11 binary: bundle pull, router serving, adapters (MCP, A2A), driver host
   seeds/          the seed set (several dedicated Agents) + importer
 web/              Svelte + Vite dashboard (S1 only)
-deploy/           docker-compose.yml (S1, S2, MinIO, Postgres, Qdrant, fake provider), devenv.nix
+deploy/           docker-compose.yml (S1, S2, Garage, Postgres, Qdrant, fake provider), devenv.nix
 ```
 
 ## Milestones
@@ -58,7 +58,6 @@ One full cycle on one function:
    (margin 0.02, paired, `ci_lo > -margin`) and measurably smaller or cheaper, reproducibly from hashes.
 6. **Deploy** — promote it by human approval into a locked bundle behind an MCP front, run shadow at 5% and
    canary, and demonstrate rollback.
-
 ## Seeds
 A **dedicated agent** is an Agent built for one purpose, which evolves from there. The initial seeding contains
 several, one per purpose, so the starting population is broad: each seed founds its own lineage and island.

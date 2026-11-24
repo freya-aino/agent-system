@@ -13,6 +13,10 @@ use agent_contracts::store::Zone;
 
 pub mod disk;
 pub mod memory;
+#[cfg(feature = "postgres")]
+pub mod postgres;
+#[cfg(feature = "s3")]
+pub mod s3;
 
 /// The content-addressed key space: `<zone>/<algo>/<hex>`, as C4 specifies. Objects,
 /// blob manifests and blob chunks all live in it — a hash covers a domain tag, so

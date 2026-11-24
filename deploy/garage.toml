@@ -1,0 +1,27 @@
+# Garage (S3-compatible object storage) for the compose stack. Development values
+# only: the RPC secret and the admin token below are fixed so the stack is
+# reproducible, and they never leave the compose network.
+#
+# Garage rather than MinIO: a single static binary, no licence surprises, and an
+# S3 API that covers what the store needs (conditional PUT, GET, HEAD, DELETE).
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+
+# One node, one copy: a development stack, not a cluster.
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+rpc_secret = "4425f5c26c5e11581d472fd02d2b2a1d6c7db4c3ac0e0d7a9d5cf1b1e6ab8c3d"
+
+[s3_api]
+# The region the store signs for; `S3Config.region` must match.
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+root_domain = ".s3.garage.localhost"
+
+[admin]
+api_bind_addr = "[::]:3903"
+admin_token = "dev-admin-token"
