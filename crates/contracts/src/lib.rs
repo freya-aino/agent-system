@@ -6,10 +6,13 @@
 //!
 //! Spec files land here milestone by milestone. Currently implemented:
 //! `types.md`, `hash.md` (string form of `HashId`), `schema.md` (crossing types only:
-//! `Fit`), `metric.md`, `primitive.md`, `unit.md`, `trace-event.md`, `driver.md`,
-//! `worker.md`, `store.md`.
+//! `Fit`), `metric.md`, `primitive.md`, `unit.md`, `trace-event.md`, `events.md`
+//! (the kinds emitted so far), `campaign.md` (`OptimizerConfig`, `MethodRef`),
+//! `driver.md`, `worker.md`, `store.md`.
 
+pub mod campaign;
 pub mod driver;
+pub mod events;
 pub mod metric;
 pub mod primitive;
 pub mod schema;

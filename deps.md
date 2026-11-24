@@ -57,5 +57,13 @@ profile and the test suite build without them. The S3 client is in-house as plan
 SigV4 and HMAC-SHA256 over `sha2` here, HTTP/1.1 framing by `hyper`, TLS by
 `tokio-rustls`. The compose object store is **Garage**, not MinIO (`docs/stack.md`).
 
+**Activated by C3, C6 and C13 (2026-11-24), none new.** The metrics, optimizer and
+swarm crates use `serde`, `serde_json`, `thiserror` and `proptest` (tests) only; every
+statistic is C0's, every hash is `sha2` through C0's encoder, and the seeded RNG is the
+one `rand_chacha` already backs. The three crates pull no async runtime: C3 is pure, C6
+is a deterministic step machine that emits events for the shard writer to append, and
+C13 drives C2, which is itself synchronous (the decision recorded above for the
+provider client). The loop therefore builds and runs with no external service.
+
 Headroom: 6. Likely first additions if needed: a compression crate for blobs, and a regex crate if the
 hand-written anchored matcher in the guard DSL and `Subsumes` proves insufficient.

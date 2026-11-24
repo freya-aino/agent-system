@@ -14,6 +14,7 @@ MetricDef {
   code_primitives: [HashId],
   judge_units:  [HashId]?,              // judge/comparator Units; presence sets judge_assisted on every record
   calibration_ref: HashId?,             // required when judge_units is non-empty
+  live_eligible: bool,                  // computable inside a deployment from content-free fields alone (C3)
   hash_spec:    int
 }
 AggregatorRef = "mean" | "median" | "pass_rate" | "p95" | "p99" | "max" | "min" | "worst_quantile:<q>" | HashId
@@ -67,6 +68,10 @@ DistributionShiftSignal { scope: { bundle: HashId?, unit: HashId?, metric: Metri
 ## Rules
 - A `MetricDef` change of any hashed field is a **new metric**. `compare`, `pareto` and `right_size` refuse inputs
   whose `MetricRef`, `MetricSuite` or seed/task set differ (`metric_version_mismatch`). No conversion exists.
+- `live_eligible` says the metric is computable from content-free fields and payload-blind checkers, so S2 may
+  compute it in memory on live traffic (C3 live mode). It is a hashed field: the same numbers computed inbound and
+  live therefore carry the same `MetricRef`, and a metric that reads an output can never be declared live by a
+  deployment. A metric with non-empty `judge_units` is never live-eligible.
 - A metric with non-empty `judge_units` sets `judge_assisted: true` on every record derived from it and may never be
   the sole gate: at least one checker-based quality metric must also pass (C9 gates).
 - A judge-bearing metric whose `CalibrationReport.status != "calibrated"` cannot gate a promotion. It may still rank

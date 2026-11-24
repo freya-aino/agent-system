@@ -1,6 +1,15 @@
 [workspace]
 resolver = "3"
-members = ["crates/contracts", "crates/core", "crates/library", "crates/runtime", "crates/store"]
+members = [
+    "crates/contracts",
+    "crates/core",
+    "crates/library",
+    "crates/runtime",
+    "crates/store",
+    "crates/metrics",
+    "crates/swarm",
+    "crates/optimizer",
+]
 
 [workspace.package]
 edition = "2024"
@@ -12,6 +21,9 @@ publish = false
 agent-contracts = { path = "crates/contracts" }
 agent-core = { path = "crates/core" }
 agent-library = { path = "crates/library" }
+agent-metrics = { path = "crates/metrics" }
+agent-optimizer = { path = "crates/optimizer" }
+agent-swarm = { path = "crates/swarm" }
 agent-runtime = { path = "crates/runtime" }
 agent-store = { path = "crates/store" }
 

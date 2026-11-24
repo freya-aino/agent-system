@@ -26,6 +26,11 @@ pub struct MetricDef {
     /// Required when `judge_units` is non-empty.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub calibration_ref: Option<HashId>,
+    /// Computable inside a deployment from content-free fields and payload-blind
+    /// checkers alone. Hashed, so the same `MetricRef` covers the inbound and the
+    /// live computation and a deployment cannot declare a payload-reading metric
+    /// live. Never true alongside `judge_units`.
+    pub live_eligible: bool,
     pub hash_spec: u32,
 }
 

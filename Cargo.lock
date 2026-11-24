@@ -38,6 +38,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-metrics"
+version = "0.1.0"
+dependencies = [
+ "agent-contracts",
+ "agent-core",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "agent-optimizer"
+version = "0.1.0"
+dependencies = [
+ "agent-contracts",
+ "agent-core",
+ "agent-library",
+ "agent-metrics",
+ "agent-runtime",
+ "agent-swarm",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "agent-runtime"
 version = "0.1.0"
 dependencies = [
@@ -72,6 +99,20 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tokio-rustls",
+]
+
+[[package]]
+name = "agent-swarm"
+version = "0.1.0"
+dependencies = [
+ "agent-contracts",
+ "agent-core",
+ "agent-library",
+ "agent-metrics",
+ "agent-runtime",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

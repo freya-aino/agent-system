@@ -11,7 +11,6 @@ use agent_contracts::types::{
     TaskId, TestKind, TestSpec,
 };
 use rand_chacha::ChaCha20Rng;
-use rand_chacha::rand_core::RngCore;
 
 const BOOTSTRAP_RESAMPLES: usize = 2000;
 
@@ -125,26 +124,13 @@ fn quantile_sorted(sorted: &[f64], p: f64) -> f64 {
     }
 }
 
-/// Exact uniform index in `[0, bound)` by rejection sampling (no modulo bias).
-fn uniform_index(rng: &mut ChaCha20Rng, bound: usize) -> usize {
-    let bound = bound as u64;
-    debug_assert!(bound > 0);
-    let reject_top = (u64::MAX % bound + 1) % bound; // 2^64 mod bound values are unusable
-    loop {
-        let v = rng.next_u64();
-        if reject_top == 0 || v <= u64::MAX - reject_top {
-            return (v % bound) as usize;
-        }
-    }
-}
-
 fn bootstrap_means(samples: &[f64], rng: &mut ChaCha20Rng) -> Vec<f64> {
     let n = samples.len();
     let mut means = Vec::with_capacity(BOOTSTRAP_RESAMPLES);
     for _ in 0..BOOTSTRAP_RESAMPLES {
         let mut sum = 0.0;
         for _ in 0..n {
-            sum += samples[uniform_index(rng, n)];
+            sum += samples[crate::rng::index(rng, n)];
         }
         means.push(sum / n as f64);
     }
@@ -434,6 +420,23 @@ pub fn wilcoxon_signed_rank(diffs: &[f64]) -> f64 {
     let delta = w_plus - mean;
     let z = (delta - 0.5 * delta.signum()) / var.sqrt();
     (2.0 * (1.0 - normal_cdf(z.abs()))).clamp(0.0, 1.0)
+}
+
+/// O'Brien–Fleming alpha spending at `fraction` of a stage's planned information:
+/// `spent = 2(1 − Φ(z_{1−α/2} / √t))`.
+///
+/// Early looks spend almost nothing and the final look spends the whole slice, which
+/// is what makes a sequential test — adding replicates until a decision is reached —
+/// keep the error rate it claims. `fraction` outside `(0, 1]` is clamped; the result
+/// never exceeds `alpha`.
+pub fn obrien_fleming(alpha: f64, fraction: f64) -> f64 {
+    if !alpha.is_finite() || alpha <= 0.0 {
+        return 0.0;
+    }
+    let t = fraction.clamp(f64::EPSILON, 1.0);
+    let z = inv_normal_cdf(1.0 - alpha / 2.0);
+    let spent = 2.0 * (1.0 - normal_cdf(z / t.sqrt()));
+    spent.clamp(0.0, alpha)
 }
 
 /// Holm step-down; reject flags in input order. NaN p-values never reject.
@@ -1053,5 +1056,31 @@ mod tests {
         let hot = drift(&baseline, &shifted, DriftTest::Cusum { k: 0.5 }).unwrap();
         assert!(hot.value > calm.value);
         assert_eq!(hot.severity, AlertSeverity::Critical);
+    }
+}
+
+#[cfg(test)]
+mod spending_tests {
+    use super::*;
+
+    #[test]
+    fn obrien_fleming_is_strict_early_and_spends_the_slice_at_the_end() {
+        let alpha = 0.02;
+        let early = obrien_fleming(alpha, 0.2);
+        let half = obrien_fleming(alpha, 0.5);
+        let full = obrien_fleming(alpha, 1.0);
+        assert!(early < half && half < full, "{early} {half} {full}");
+        // The erf approximation carries ~1.5e-7 of error, so the final look lands
+        // on the slice to within that, not to the bit.
+        assert!((full - alpha).abs() < 1e-6, "{full}");
+        assert!(
+            early < alpha / 10.0,
+            "early looks are conservative: {early}"
+        );
+        // Out-of-range fractions are clamped, never negative or above the slice.
+        assert_eq!(obrien_fleming(alpha, 2.0), full);
+        assert!(obrien_fleming(alpha, -1.0) >= 0.0);
+        assert!(obrien_fleming(alpha, 0.5) <= alpha);
+        assert_eq!(obrien_fleming(0.0, 0.5), 0.0);
     }
 }

@@ -9,6 +9,7 @@
 pub mod builder;
 pub mod compile;
 pub mod diff;
+pub mod fit;
 pub mod hashing;
 pub mod import;
 pub mod primitive;
@@ -16,7 +17,7 @@ pub mod registry;
 pub mod runner;
 pub mod validate;
 
-pub use builder::{AgentBuilder, NodeBuilder};
+pub use builder::{AgentBuilder, NodeBuilder, SwarmBuilder};
 pub use compile::{CompiledUnit, compile};
 pub use registry::{InMemoryRegistry, Resolver};
 pub use validate::{ValidateOptions, ValidationReport, validate};

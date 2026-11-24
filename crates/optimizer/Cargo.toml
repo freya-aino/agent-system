@@ -1,0 +1,21 @@
+[package]
+name = "agent-optimizer"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "C6: the evolutionary loop over one population — variation operators, the cheapest-first funnel, racing, and selection."
+
+[dependencies]
+agent-contracts.workspace = true
+agent-core.workspace = true
+agent-library.workspace = true
+agent-metrics.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+agent-runtime.workspace = true
+agent-swarm.workspace = true

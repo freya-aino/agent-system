@@ -72,6 +72,12 @@ regions is the absence of an edge. `policy` carries the run horizon and budget. 
 (`subject | frozen | co_evolving`) is part of the Swarm hash and is declared in the slot's `GraphNode.label`-free
 member entry: `members[slot] = { unit: HashId, mutability }` at L3 only.
 
+The workload binding uses the **reserved slot name `workload`**, whose value is the `HashId` of a `Dataset`
+(types.md) rather than of a Unit: it is a member so that it is part of the Swarm hash — a Swarm evaluated on a
+different workload is a different Swarm — but it is data, not closure. A reserved slot never appears on the macro
+graph and is not resolved by C1's closure check; the dataset is fetched by whoever hosts the Swarm (C13), where
+the store is reachable.
+
 ## L4/L5 conventions
 The Optimizer (`kind: optimizer`) and Meta-Optimizer (`kind: meta_optimizer`) are Units: `members` = algorithm code,
 hyperparameters and learned parameters (each a hashed primitive or object); `interface` = the operations of their

@@ -6,8 +6,12 @@
 //! `rng(seed)` keys ChaCha20 with `SHA-256(u64_le_bytes(seed))` and a zero nonce.
 
 use rand_chacha::ChaCha20Rng;
-use rand_chacha::rand_core::SeedableRng;
+use rand_chacha::rand_core::{RngCore, SeedableRng};
 use sha2::{Digest, Sha256};
+
+/// The seeded stream itself. Named here so a caller can hold one without depending
+/// on which CSPRNG C0 pins: the choice is part of C0's contract, not its callers'.
+pub type Rng = ChaCha20Rng;
 
 /// Hashing, not stream splitting: order-free and identical on every platform.
 pub fn derive(seed: u64, label: &str) -> u64 {
@@ -24,6 +28,28 @@ pub fn rng(seed: u64) -> ChaCha20Rng {
     let key: [u8; 32] = h.finalize().into();
     // from_seed keys ChaCha20 and leaves the stream (nonce) at zero.
     ChaCha20Rng::from_seed(key)
+}
+
+/// Exact uniform index in `[0, bound)` by rejection sampling — no modulo bias, so a
+/// draw is uniform whatever the bound. Panics on a zero bound: there is no index.
+pub fn index(rng: &mut ChaCha20Rng, bound: usize) -> usize {
+    let b = bound as u64;
+    assert!(b > 0, "no index in an empty range");
+    let reject_top = (u64::MAX % b + 1) % b; // 2^64 mod b values are unusable
+    loop {
+        let v = rng.next_u64();
+        if reject_top == 0 || v <= u64::MAX - reject_top {
+            return (v % b) as usize;
+        }
+    }
+}
+
+/// Seeded Fisher–Yates. Deterministic for a given RNG state, which is what makes a
+/// workload's arrival order reproducible from the run seed alone.
+pub fn shuffle<T>(rng: &mut ChaCha20Rng, items: &mut [T]) {
+    for i in (1..items.len()).rev() {
+        items.swap(i, index(rng, i + 1));
+    }
 }
 
 #[cfg(test)]

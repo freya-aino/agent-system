@@ -78,6 +78,17 @@ pub fn validate(unit: &Unit, resolver: &dyn Resolver, opts: &ValidateOptions) ->
                 ));
             }
         }
+        3 => {
+            if let Some(graph) = &unit.graph {
+                check_swarm(unit, graph, resolver, opts, &mut r);
+            } else {
+                r.push(Diagnostic::error(
+                    "missing_graph",
+                    "$.graph",
+                    "a Swarm must declare its macro routing graph",
+                ));
+            }
+        }
         _ => r.push(Diagnostic::warning(
             "level_not_checked",
             "$.level",
@@ -152,6 +163,11 @@ fn check_child_within(child: &Limits, parent: &Limits, path: &str, r: &mut Valid
 fn closure_hashes(unit: &Unit) -> Vec<(String, HashId)> {
     let mut out: Vec<(String, HashId)> = Vec::new();
     for (slot, m) in &unit.members {
+        // A reserved L3 slot binds data (the workload Dataset), not closure: it is
+        // part of the hash but lives in the store, which C1 cannot reach.
+        if agent_contracts::unit::is_data_slot(unit.level, slot) {
+            continue;
+        }
         out.push((format!("$.members.{slot}"), m.unit().clone()));
     }
     if let Some(m) = &unit.model {
@@ -468,6 +484,113 @@ fn check_graph(unit: &Unit, graph: &Graph, resolver: &dyn Resolver, r: &mut Vali
             .first()
             .and_then(|p| parse_ref(resolver, &p.schema));
         node_io.insert(id.clone(), (input, output));
+    }
+
+    check_connectivity(graph, r);
+    check_channels(graph, resolver, &node_io, r);
+    check_edges(graph, resolver, &node_io, r);
+}
+
+// --- the L3 macro graph: role slots, mutability, containment (C13) ----------------
+
+/// A Swarm's graph is the macro routing graph: its nodes are role slots occupied by
+/// **Agents**, its edges carry `value` (direct messaging) or `state-read` (shared
+/// read-only data), and the absence of an edge is isolation. The structural checks
+/// (connectivity, bounded cycles, schema flow, guards) are the same as an Agent's —
+/// one level up — so they are reused rather than restated.
+fn check_swarm(
+    unit: &Unit,
+    graph: &Graph,
+    resolver: &dyn Resolver,
+    opts: &ValidateOptions,
+    r: &mut ValidationReport,
+) {
+    if !unit
+        .members
+        .contains_key(agent_contracts::unit::WORKLOAD_SLOT)
+    {
+        r.push(Diagnostic::warning(
+            "no_workload",
+            "$.members.workload",
+            "an inbound Swarm binds a workload Dataset; a deployed one takes real arrivals",
+        ));
+    }
+    if unit.metrics.is_empty() {
+        r.push(Diagnostic::warning(
+            "no_metrics",
+            "$.metrics",
+            "a Swarm selects its metrics by MetricRef, so the choice is part of its hash",
+        ));
+    }
+
+    let mut node_io: BTreeMap<NodeId, (Option<Schema>, Option<Schema>)> = BTreeMap::new();
+    for (id, gnode) in &graph.nodes {
+        let path = format!("$.graph.nodes.{id}");
+        if agent_contracts::unit::is_data_slot(unit.level, &gnode.slot) {
+            r.push(Diagnostic::error(
+                "data_slot_on_graph",
+                &path,
+                "a reserved data slot is a binding, never a node of the macro graph",
+            ));
+            continue;
+        }
+        let Some(member) = unit.members.get(&gnode.slot) else {
+            r.push(Diagnostic::error(
+                "unknown_slot",
+                &path,
+                format!("slot {:?} has no member", gnode.slot),
+            ));
+            continue;
+        };
+        // Mutability is part of the Swarm hash, so "which judge scored this" is an
+        // identity rather than a log line: a bare hash at L3 leaves it unsaid.
+        if !matches!(member, agent_contracts::unit::MemberRef::SwarmSlot { .. }) {
+            r.push(Diagnostic::error(
+                "missing_mutability",
+                format!("$.members.{}", gnode.slot),
+                "an L3 role slot declares { unit, mutability }",
+            ));
+        }
+        let Some(member_unit) = resolver.unit(member.unit()) else {
+            r.push(Diagnostic::error(
+                "E_CLOSURE",
+                &path,
+                format!("unresolved member {}", member.unit()),
+            ));
+            continue;
+        };
+        if member_unit.level != 2 {
+            r.push(Diagnostic::error(
+                "not_an_agent",
+                &path,
+                "a Swarm's role slots are occupied by Agents (L2)",
+            ));
+            continue;
+        }
+        // Judge and adversary Units may be assigned only in inbound Swarms, and are
+        // never in a bundle closure. `build_request` is exactly that distinction.
+        if opts.build_request && matches!(member_unit.role, Role::Judge | Role::Adversary) {
+            r.push(Diagnostic::error(
+                "role_not_buildable",
+                &path,
+                "judge and adversary Units are never in a bundle closure",
+            ));
+        }
+        node_io.insert(
+            id.clone(),
+            (
+                member_unit
+                    .interface
+                    .inputs
+                    .first()
+                    .and_then(|p| parse_ref(resolver, &p.schema)),
+                member_unit
+                    .interface
+                    .outputs
+                    .first()
+                    .and_then(|p| parse_ref(resolver, &p.schema)),
+            ),
+        );
     }
 
     check_connectivity(graph, r);

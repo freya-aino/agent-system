@@ -1,12 +1,12 @@
-//! Fluent builders for Nodes (L1) and Agents (L2). No hidden state: the output is
-//! the plain contract `Unit` value.
+//! Fluent builders for Nodes (L1), Agents (L2) and Swarms (L3). No hidden state: the
+//! output is the plain contract `Unit` value.
 
 use std::collections::BTreeMap;
 
 use agent_contracts::unit::{
     Binding, Carries, Channel, ChannelId, ChannelScope, Edge, EdgeBinding, Fanout, Graph,
-    GraphNode, GuardRef, Interface, Join, Limits, MemberRef, MemoryPolicy, Port, ReducerRef, Role,
-    Unit,
+    GraphNode, GuardRef, Interface, Join, Limits, MemberRef, MemoryPolicy, Mutability, Port,
+    ReducerRef, Role, Unit,
 };
 use agent_contracts::{HashId, NodeId, SchemaRef, Slot};
 
@@ -326,4 +326,136 @@ pub fn channel_writers_readers(graph: &Graph) -> BTreeMap<ChannelId, (Vec<NodeId
 /// The slot a graph node runs, resolved through `members`.
 pub fn member_of<'a>(unit: &'a Unit, slot: &Slot) -> Option<&'a HashId> {
     unit.members.get(slot).map(MemberRef::unit)
+}
+
+/// The L3 declaration (`swarm(graph, members, workload, policy, …)`). Hosting —
+/// instantiation, the workload generator, the runs — is C13; this only declares.
+///
+/// A role slot carries its `mutability` (`subject | frozen | co_evolving`), which is
+/// part of the Swarm hash: within one experiment every non-subject slot is frozen,
+/// so no population is ever optimised against a moving partner, and the record of
+/// *which* partner says so is an identity rather than a log line.
+pub struct SwarmBuilder {
+    unit: Unit,
+    graph: Graph,
+}
+
+impl SwarmBuilder {
+    pub fn new(input: (&str, SchemaRef), output: (&str, SchemaRef)) -> Self {
+        let mut inner = AgentBuilder::new(input, output);
+        inner.unit.level = 3;
+        inner.unit.kind = "swarm".to_owned();
+        SwarmBuilder {
+            unit: inner.unit,
+            graph: inner.graph,
+        }
+    }
+
+    /// Place an Agent in a role slot and put it on the macro graph under the same
+    /// id. Slot and graph id coincide: a Swarm's graph nodes *are* its role slots.
+    pub fn slot(mut self, slot: &str, agent: HashId, mutability: Mutability) -> Self {
+        self.unit.members.insert(
+            slot.to_owned(),
+            MemberRef::SwarmSlot {
+                unit: agent,
+                mutability,
+            },
+        );
+        self.graph.nodes.insert(
+            slot.to_owned(),
+            GraphNode {
+                slot: slot.to_owned(),
+                ports: agent_contracts::unit::PortBindings {
+                    input: BTreeMap::from([("in".to_owned(), Binding::Edge(EdgeBinding))]),
+                    out: BTreeMap::from([("out".to_owned(), Binding::Edge(EdgeBinding))]),
+                },
+                limits: None,
+                label: None,
+            },
+        );
+        self
+    }
+
+    /// Bind the workload `Dataset` under the reserved slot, so a Swarm evaluated on
+    /// a different workload is a different Swarm.
+    pub fn workload(mut self, dataset: HashId) -> Self {
+        self.unit.members.insert(
+            agent_contracts::unit::WORKLOAD_SLOT.to_owned(),
+            MemberRef::Hash(dataset),
+        );
+        self
+    }
+
+    /// A pinned, versioned, read-only connector — including a deterministic
+    /// simulated service, which is an ordinary connector and not a special concept.
+    pub fn connector(mut self, binding: agent_contracts::unit::ConnectorBinding) -> Self {
+        self.unit.connectors.insert(binding.name.clone(), binding);
+        self
+    }
+
+    /// Select a code-defined metric by ref, making the metric choice part of the hash.
+    pub fn metric(mut self, metric: agent_contracts::MetricRef) -> Self {
+        self.unit.metrics.push(metric);
+        self
+    }
+
+    pub fn edge(mut self, from: &str, to: &str, carries: Carries) -> Self {
+        self.graph.edges.push(Edge {
+            from: from.to_owned(),
+            to: to.to_owned(),
+            guard: None,
+            else_: false,
+            fanout: Fanout::default(),
+            join: Join::default(),
+            loop_bound: None,
+            carries,
+        });
+        self
+    }
+
+    pub fn entry(mut self, slots: &[&str]) -> Self {
+        self.graph.entry = slots.iter().map(|s| (*s).to_owned()).collect();
+        self
+    }
+
+    pub fn exit(mut self, slots: &[&str]) -> Self {
+        self.graph.exit = slots.iter().map(|s| (*s).to_owned()).collect();
+        self
+    }
+
+    pub fn family(mut self, family: &str) -> Self {
+        self.unit.family = Some(family.to_owned());
+        self
+    }
+
+    pub fn function(mut self, f: agent_contracts::unit::FunctionDescriptor) -> Self {
+        self.unit.functions.push(f);
+        self
+    }
+
+    /// The run horizon and budget.
+    pub fn policy(mut self, limits: Limits) -> Self {
+        self.unit.policy = limits;
+        self
+    }
+
+    pub fn build(mut self) -> Unit {
+        self.unit.graph = Some(self.graph);
+        self.unit
+    }
+}
+
+/// The role slots of a Swarm, in slot order, with their mutability — the reserved
+/// data bindings left out.
+pub fn role_slots(unit: &Unit) -> Vec<(Slot, HashId, Mutability)> {
+    unit.members
+        .iter()
+        .filter(|(slot, _)| !agent_contracts::unit::is_data_slot(unit.level, slot))
+        .filter_map(|(slot, m)| match m {
+            MemberRef::SwarmSlot { unit, mutability } => {
+                Some((slot.clone(), unit.clone(), *mutability))
+            }
+            MemberRef::Hash(_) => None,
+        })
+        .collect()
 }

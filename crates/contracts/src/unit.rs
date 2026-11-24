@@ -52,6 +52,18 @@ pub struct Unit {
     pub hash: Option<HashId>,
 }
 
+/// The reserved L3 slot binding the workload `Dataset` (`specs/unit.md`, L3
+/// conventions). It is a member so the workload is part of the Swarm hash, but its
+/// value is a `Dataset` id, not a Unit: it is data, never closure, and C1 does not
+/// resolve it.
+pub const WORKLOAD_SLOT: &str = "workload";
+
+/// Whether `slot` of a Unit at `level` is a reserved data binding rather than a
+/// closure member. Only L3 has any.
+pub fn is_data_slot(level: u8, slot: &str) -> bool {
+    level == 3 && slot == WORKLOAD_SLOT
+}
+
 /// A member entry: a bare hash everywhere except L3, where a slot carries the unit
 /// plus its mutability.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
