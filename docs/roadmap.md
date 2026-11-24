@@ -38,9 +38,9 @@ deploy/           docker-compose.yml (S1, S2, Garage, Postgres, Qdrant, fake pro
 | **M3 Store** | local-disk then S3 + Postgres backends; event chain, leases with fencing, blobs with retention classes, resharding by split; `GraphIndex` on recursive CTEs; compose stack up | C4 |
 | **M4 Metrics and the Optimizer** | programmatic metrics, checkers, paired comparison with the fixed alpha budget, funnel, racing, NSGA-style selection over several seed lineages against the fake provider; **no Meta-Optimizer** | C3, C6, C13 (minimal Swarm) |
 | **M5 Meta-Optimizer and archive** | pseudo-marginal MCMC with diagnostics, QD archive and pools, minimal-IO datasets, subtree credit, campaign events, the baseline harness; `VectorIndex` on Qdrant plus the in-process fallback, with a rebuild test against both | C5, C7 |
-| **M6 Promotion, bundle and S2** | gates, human approval, export policy, signed bundle via the signing service, S2 pulls and verifies, router serves select-only, MCP and A2A over HTTP, telemetry out, revocation feed | C8, C9, C11, C12 |
+| **M6 Promotion, bundle and S2** | gates, human approval, signed bundle via the signing service, S2 pulls and verifies, router serves select-only, MCP, A2A and OpenAI-compatible over HTTP, telemetry out, revocation feed; **run classes with preemption and the capacity controller**; **live evaluation in memory with nothing stored**; the signed `DeploymentPolicy` S2 pulls; export policy present but off by default | C8, C9, C11, C12, C2 |
 | **M7 Firecracker** | rootfs build, jailer, snapshot restore, egress proxy with credential injection, hardening, the prod profile refusing weaker isolation | driver-fc, C2, C11 |
-| **M8 Dashboard and the rest** | dashboard views, LLM-proposed mutations (GEPA-style), RL Meta-Optimizer, router priors from the archive, sentinels and drift, OTel export | C10, C7, C8, C12 |
+| **M8 Web interface and the rest** | the management UI — served-surface view (MCP tools, A2A skills, OpenAI routes), live swarm and member management, the proposal-incorporation workflow, allocation and capacity editing with policy signing, capacity/latency panels — the **internal-cohort promotion loop** end to end, LLM-proposed mutations (GEPA-style), RL Meta-Optimizer, router priors from the archive, sentinels and drift, OTel export | C10, C7, C8, C12, C9 |
 
 Dependencies: `M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8`, with C13's minimal Swarm landing inside M4 and the
 dashboard's read models trailing each milestone that produces events.
@@ -58,6 +58,11 @@ One full cycle on one function:
    (margin 0.02, paired, `ci_lo > -margin`) and measurably smaller or cheaper, reproducibly from hashes.
 6. **Deploy** — promote it by human approval into a locked bundle behind an MCP front, run shadow at 5% and
    canary, and demonstrate rollback.
+7. **Close the loop in production** — ship the next candidate as an `internal` cohort member of that bundle, let
+   the live system evaluate it under load (front-facing latency unaffected, nothing stored), and incorporate it
+   into service from the web interface on the live evidence. This is the proof that the system optimises itself
+   while deployed without production ever mutating itself.
+
 ## Seeds
 A **dedicated agent** is an Agent built for one purpose, which evolves from there. The initial seeding contains
 several, one per purpose, so the starting population is broad: each seed founds its own lineage and island.
@@ -80,6 +85,10 @@ seed set is a no-op.
 - A **fake provider** — deterministic, seeded, with configurable latency, failure rate and drift — is an
   ordinary OpenAI-compatible connection, so the whole loop runs reproducibly offline and in compose, and real
   providers need no separate code path.
+- **Load tests are a correctness test here, not a benchmark.** From M6 the suite includes a saturation run that
+  holds front-facing p99 against the SLO while the internal cohort is running, and asserts that internal runs are
+  preempted, that `overloaded` is returned only when front-facing demand alone exceeds capacity, and that no
+  Trace or payload from any class was written anywhere.
 - Per milestone: unit and property tests, a golden-trace replay test, an archive-rebuild test (rebuild from the
   log and compare), and from M3 an end-to-end compose test.
 - The scrubber conformance corpus (C12) runs from M6 and gates every release.

@@ -8,8 +8,18 @@ external interface) and runs the router Unit from the bundle (C8).
 A **completely headless** serving layer. It pulls signed bundles from a registry, verifies them, and serves the
 advertised functions over standard protocols, routing each request to a locked lineage member. It is
 **select-only**: nothing mutates in production, no external writes occur, no inbound credentials exist. The only
-way out is one-way content-free telemetry. The only configuration surface is files and environment variables:
-no UI, and no admin API that changes behaviour.
+way out is one-way content-free telemetry. It has no UI and no admin API that changes behaviour: its inputs are
+files, environment variables and the two signed artifacts it pulls (bundle, `DeploymentPolicy`).
+
+It also **evaluates what it serves, continuously, on the live system**. Alongside front-facing traffic it runs
+shadow mirrors and an internal evaluation cohort — the bundle's `internal` members (bundle.md) — reduces both to
+content-free metrics in memory, and exports them as `LiveFitness`. Nothing about that loop mutates the
+deployment: every Unit that executes is in a verified closure, and a candidate leaves the cohort only as a new
+signed bundle. Two properties hold absolutely:
+- **Front-facing latency comes first.** Internal work is admitted only out of headroom and is preempted when
+  front-facing demand rises (C2). A client is never queued behind the system evaluating itself.
+- **Evaluation keeps no data.** No Trace object, no payload, no request or response text is stored anywhere; the
+  metric distribution is the only thing that survives the window (store.md, telemetry.md).
 
 ## Owned data
 - **Bundle cache**: verified bundles and their closure objects, by hash (immutable; local disk or object store).
@@ -19,16 +29,26 @@ no UI, and no admin API that changes behaviour.
 - **Session pins**: `{session_id -> deployment}` with a TTL; soft state, losable.
 - **MicroVM pool state**: warm snapshots per bundle, VM host inventory.
 - **Telemetry spool**: a bounded local queue of content-free envelopes awaiting export.
+- **Deployment policy in force**: the last verified `DeploymentPolicy` (bundle.md) and its version, plus whatever
+  the local files pin on top of it.
+- **Live metric windows**: in-memory, per member, per metric — the accumulators behind `LiveFitness`, holding
+  counts, moments, quantile sketches and the task ids seen. Bounded, losable, and flushed into telemetry at the
+  window boundary. They hold no inputs, no outputs and no traces.
+- **Capacity state**: observed front-facing p99, the current internal share and the controller's last decision.
 - No request or response content is persisted. Task-scoped memory lives inside the instance and dies with it.
+- No Trace object is persisted, for any class of run. A trace exists only as long as the metrics are being
+  computed from it, then it is dropped.
 
 ## Inputs / Outputs
-In: `Bundle` and `RevocationFeed` from the registry, by **pull only**; client requests through protocol adapters,
-mapped to `TaskRequest`; config files and env (deployments, rollout shares, trust keys, protocols, limits,
-egress allowlist, telemetry sink); read-only connectors pinned in `manifest.connectors`.
+In: `Bundle`, `DeploymentPolicy` and `RevocationFeed` from the registry, by **pull only**; client requests
+through protocol adapters, mapped to `TaskRequest`; config files and env (deployments, rollout shares, trust keys,
+protocols, limits, capacity policy, egress allowlist, telemetry sink); read-only connectors pinned in
+`manifest.connectors`; the `Evaluation` named by each `internal` member, which drives the cohort's runs.
 Out: `TaskResult` to the client; `RouteDecision` internally; and one way to S1, the `TelemetryEnvelope` —
-`SpanCF`s with no payload refs, counts and summaries, deployment-state events (`deployment_verified`,
-`deployment_failed`, `rollout_stage`, `rolled_back`, `demoted`), `cold_start` events with features and a region
-id, and `ProviderMeta` as drift input. Never bundles, objects, content, or anything to S1 beyond that envelope.
+`SpanCF`s with no payload refs, counts and summaries per `RunClass`, the `CapacityReport`, the window's
+`LiveFitness` distributions for every front and internal member, deployment-state events
+(`deployment_verified`, `deployment_failed`, `rollout_stage`, `rolled_back`, `demoted`), `cold_start` events with
+features and a region id, and `ProviderMeta` as drift input. Never bundles, objects, content, or anything to S1 beyond that envelope.
 
 ## Architecture
 ```
@@ -63,6 +83,39 @@ Before a bundle leaves `verifying`:
 A **release set** (bundle.md) verifies all-or-nothing: no member activates until every member verifies. Failure
 leaves the previous deployment untouched. Every verification result is emitted as telemetry.
 
+## Classes, capacity and load balancing
+Every admitted client request is a `front_facing` run; a mirror of one is `shadow`; a cohort or probe run is
+`internal_eval` (front.md: the class is assigned, never requested).
+
+- **Separate pools.** Front-facing and internal runs never share an instance, a queue or a rate-limit
+  reservation. An internal run therefore cannot hold anything a front-facing run needs (C2), and the only
+  resource they genuinely share — the provider's rate limit — is split by the reserve.
+- **The controller** is a closed loop over one signal, the front-facing p99 of `CapacityPolicy.slo.metric`. It
+  moves the internal share inside `[internal_min, internal_max]`: the share shrinks (geometrically, toward
+  `internal_min`, which may be 0) while the observed p99 is within a margin of the target or the front-facing
+  queue is non-empty, and grows back slowly while there is margin to spare. It is monotone in load, has no
+  schedule and needs no operator: an idle deployment evaluates a lot, a saturated one evaluates nothing.
+- **Shedding order under overload**: preempt internal runs, then stop admitting them, then shed `shadow`, and
+  only then return `overloaded` to a client with `retry_after_ms`. A client sees back-pressure only when
+  front-facing demand alone exceeds capacity.
+- **Cohort scheduling**: internal members are driven by their `Evaluation` (shared seeds and task ids), so the
+  live comparison between a cohort member and the active one is paired, which is what C3 requires. Internal runs
+  are also the natural place for the router's cheap probes.
+- Every decision the controller makes is reported in the `CapacityReport`, so the trade between evaluation
+  throughput and latency is visible in the UI rather than inferred.
+
+## Live evaluation (no data kept)
+1. A run finishes (any class). Its Trace is in memory.
+2. The embedded metric evaluator (C3's library, which is pure over traces) computes the bundle's declared
+   metrics, plus checkers that do not need payload text.
+3. The numbers go into the member's window accumulator; **the Trace and every payload are dropped**.
+4. At the window boundary the accumulators become `LiveFitness` records in the next envelope and are reset.
+
+Consequences, stated plainly: production can measure latency, cost, token use, completion, schema validity and
+any checker expressible over content-free fields; it cannot measure anything that needs to read the text. Those
+metrics stay inbound, on exported or synthetic datasets (C9's export policy, default off). `no_sample` changes
+nothing here, because nothing is stored for any request.
+
 ## Router serving (select-only)
 The bundle's router Unit computes a `TaskClassDescriptor` with its pinned encoder and runs the contextual bandit
 over `Priors`, seeded deterministically from `request_id`. Optional cheap probes run inside the instance as
@@ -96,7 +149,7 @@ the thing `microvm` exists to remove. Each driver's level is written to startup 
 envelope. The same bundle runs unchanged on all three; only the guarantees differ.
 
 ## Protocol adapters
-`MCP`, `A2A`, optionally `OpenAI-compatible`. Adapters translate only (front.md); the field-level mappings are
+`MCP`, `A2A` and `OpenAI-compatible`, all three advertised by default (front.md); a deployment may switch one off in config. Adapters translate only; the field-level mappings are
 the table in front.md, pinned per adapter version and recorded in every telemetry record. **Each
 `FunctionDescriptor` is exposed as its own endpoint, tool, skill or route.** One front process hosts all
 configured adapters (front.md). Callers authenticate to the front (API key, OIDC or mTLS per config) with
@@ -106,8 +159,12 @@ per-caller quotas; those credentials are inbound to the front only and are never
 
 ## Rollout states and session pinning
 - Plan stages `shadow → canary → active`; S2-driven states `draining`, `retired`, `quarantined` (bundle.md).
-- Rollout is **declared in config** (`deployments: [{root, state, share}]`), reloaded on file change or SIGHUP;
-  S2 never decides a promotion. Stage exit thresholds come from `manifest.rollout.stages`; a breach only
+- Rollout is **declared**, not decided: by the signed `DeploymentPolicy` it pulls and by local config, which
+  always wins where the two disagree (bundle.md). A policy may change states, shares and the capacity policy; it
+  can neither introduce nor alter a Unit, and a `root` it names must already be a verified bundle, so the worst a
+  bad policy can do is route among verified members or starve the deployment's own evaluation. The policy is the
+  path from the management UI to a running deployment, and it keeps the direction one-way: the UI edits, the
+  signing service signs, the registry serves, S2 pulls. S2 never decides a promotion. Stage exit thresholds come from `manifest.rollout.stages`; a breach only
   tightens (back to `manifest.rollout.previous`). Rollback is a config edit or that automatic tightening,
   pointing at the prior bundle, which is still in cache.
 - **Session pinning**: a session stays on the deployment that served its first request until it ends or
@@ -143,7 +200,14 @@ a typed `overloaded` error — never an unbounded queue.
 ## Invariants
 - Only verified bundles ever execute; an unverified or failed bundle never serves, and the previous active
   deployment stays.
-- Select-only: no code path modifies, generates or loads a Unit outside a verified bundle closure.
+- Select-only: no code path modifies, generates or loads a Unit outside a verified bundle closure. The internal
+  cohort is inside the closure, which is exactly why it is allowed to run here.
+- An `internal` member never serves a client request, under any share, policy or failure mode.
+- A `front_facing` run is never delayed by internal work: internal runs are preempted before a client is queued,
+  and `overloaded` is returned only when front-facing demand alone exceeds capacity.
+- No Trace and no payload is persisted for any class of run; what leaves is `LiveFitness` and content-free spans.
+- A `DeploymentPolicy` is applied only if its signature verifies under a trusted key and its version is higher
+  than the one in force; local config overrides it; a failed policy leaves the last good one in place.
 - No external writes, no inbound credentials in any VM, connectors read-only at pinned versions, egress
   deny-by-default.
 - One isolated instance per bundle; no sharing across bundles.
@@ -167,6 +231,11 @@ a typed `overloaded` error — never an unbounded queue.
   signalling `session_reset`.
 - **Provider drift or outage**: emitted as telemetry; the router avoids a member only if its priors say so; no
   automatic mutation ever.
+- **Internal cohort misbehaving** (errors, timeouts, cost): it is stopped locally and reported — a cohort member
+  cannot affect a client, because it never receives one. Repeated failure circuit-breaks that member for the
+  window and is negative evidence for its promotion, which is the loop working rather than an incident.
+- **Policy unavailable or stale**: keep the last good policy; the staleness rule that applies to the feed applies
+  here too, and with no policy at all the local config alone decides.
 - **Telemetry sink down**: spool and drop as above.
 - **Config invalid**: refuse to start, or keep the last good config on reload.
 - **No KVM**: start on a fallback only if config allows, else exit with a clear error.
@@ -186,10 +255,19 @@ a typed `overloaded` error — never an unbounded queue.
   deployment location, including air-gapped ones, where the feed and bundles are carried in by file.
 - **Accepted production fallback is gVisor/Kata-class only** (above).
 - **Descriptor vectors are never exported**, only features and a region id (task-class.md).
+- **The evaluation cohort lives in the bundle, not beside it.** The alternative — letting S2 fetch candidate
+  Units for evaluation — would need an S1→S2 push and would put unverified code in production; putting the cohort
+  in the signed manifest keeps select-only, keeps the gates in front of every line that executes, and still gives
+  the optimizer live evidence. The cost is that a new candidate needs a new bundle, which is a UI action, and
+  that is the deliberate place for a human.
+- **Capacity is S2's decision, promotion is not.** Allocating its own capacity is local, reversible and
+  latency-critical, so it is a closed loop with no human in it; changing what serves a client is neither, so it
+  stays a signed artifact that someone incorporated.
 
 ## Contracts used
 `bundle` (manifest, RolloutPlan, Registry, RevocationFeed, release sets, trust roots), `front` (TaskRequest,
 TaskResult, StageEvent, ProtocolAdapter, adapter mappings, error codes), `task-class` (descriptor, Priors,
 RouteDecision, Plan, privacy rule), `driver` (Driver, EgressPolicy, CredentialPolicy, SnapshotRef, Health),
-`telemetry` (envelope, SpanCF, fail-closed policy), `trace-event` (Trace, ContentFreeSummary), `types`
-(DeployState, ErrorCode, Limits).
+`telemetry` (envelope, SpanCF, `CapacityReport`, `LiveFitness`, fail-closed policy), `trace-event` (Trace,
+ContentFreeSummary), `types` (DeployState, ErrorCode, Limits, RunClass), `bundle` (`BundleMember`,
+`DeploymentPolicy`, `CapacityPolicy`), `metric` (the metric library, run in memory over live traces).

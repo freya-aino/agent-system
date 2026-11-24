@@ -47,7 +47,29 @@ calibrate(metric, ground_truth_checker, sample) -> CalibrationReport
 audit_metric(metric, adversarial_set) -> MetricAuditReport
 detect_gaming(records, traces) -> [GamingAlert]
 monitor(content_free_summaries, window) -> DistributionShiftSignal     // for S2; summary-level only
+live_window(traces, suite) -> [LiveFitness]     // in-memory, inside S2: accumulate then drop the traces
 ```
+
+## Live mode (metrics computed where the run happened)
+S2 evaluates on the live system and keeps no data (C11, store.md), so the pure core runs **inside the
+deployment**: `live_window` folds each finished Trace into a per-member accumulator (counts, moments, quantile
+sketches, task ids, unscored reasons) and the Trace is dropped immediately. The window flushes as the
+`LiveFitness` records of telemetry.md.
+
+What this constrains, stated as rules rather than discovered later:
+- **A metric is live-eligible only if it is computable from content-free fields and checkers that never read
+  payload text**: latency, cost, tokens, hops, completion, schema validity, guard and limit behaviour, and any
+  structural checker. A metric that reads an output is not live-eligible and is evaluated inbound, where payloads
+  exist. Every `MetricDef` declares which it is, and the flag is part of its hash.
+- **Distributions from live mode never carry `samples_ref`**, so `effective_n` is computed from the window's
+  recorded task and seed ids, not from the raw values. A live comparison is still paired, because the internal
+  cohort runs the same `Evaluation` seeds and tasks as the incumbent.
+- **Judge-assisted metrics are never live.** A judge reads text, so `judge_assisted` is always false in a live
+  record — which also means production can never be gamed through a judge.
+- Runs that ended `preempted` or `infra_error` are counted in `unscored` with their reason and excluded from the
+  distribution; a candidate is never penalised for the load at the time (types.md).
+- Windows are not comparable across bundles, price tables or encoder versions, and each record carries the hashes
+  needed to refuse such a comparison.
 
 ## Right-sizing
 A candidate is right-sized iff

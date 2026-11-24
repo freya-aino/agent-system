@@ -95,8 +95,14 @@ The Unit is the spec. An **Instance** is the running thing and is never hashed:
 Instance { unit: HashId, run_id, seed, workspace_ref: HashId?, state: InstanceState }
 InstanceState { channels: map<ChannelId, bytes>, memory: bytes, cursor: Cursor }
 Cursor { frontier: [NodeRun], loop_counts: map<NodeId, int>, spent: Budget, next_span: int }
-Checkpoint { instance: InstanceState, unit: HashId, run_id, seed, limits_remaining: Limits, hash_spec: int }
-RunRequest { unit: HashId, input, seed, workspace_ref?, flags: { no_sample: bool }, budget: Budget, job_ref? }
+Checkpoint { instance: InstanceState, unit: HashId, run_id, seed, limits_remaining: Limits, hash_spec: int,
+             class: RunClass }
+// `class` travels with the checkpoint: a preempted internal run must resume as the class it was admitted under
+// (C2), and a migrated front-facing run must not be silently demoted on the machine that picks it up.
+RunRequest { unit: HashId, input, seed, workspace_ref?, flags: { no_sample: bool }, budget: Budget, job_ref?,
+             class: RunClass = internal_eval }
+// `class` (types.md) decides priority and whether payloads may be stored. The default is the unprivileged one:
+// a run that does not say it is serving a client cannot claim a client's latency guarantee.
 ```
 A `Checkpoint` is serialisable, self-describing and portable between workers of the same `hash_spec`; it carries no
 credentials and no connector handles.

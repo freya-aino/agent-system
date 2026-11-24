@@ -7,7 +7,13 @@ Event and trace pipeline, one-way telemetry, kill-switch and drift signals. Depe
 ## Purpose
 Move traces and events from where they are produced to where they are consumed, without ever opening a write
 path from S1 into S2 and without leaking content from S2. Provide the signals S1 uses to keep lineages honest:
-shared-surface telemetry, drift, kill-switch status, audit. It must work at any deployment location — laptop,
+shared-surface telemetry, drift, kill-switch status, audit. Since the deployment evaluates itself and keeps no
+data (C11), this pipeline also carries the **evaluation results** — `LiveFitness` distributions and the
+`CapacityReport` — which makes the scrubber load-bearing for the optimisation loop, not only for privacy: if a
+field cannot leave S2, the loop cannot use it, and the two must be decided together.
+
+The latency SLO is observed here too: the front-facing p99 that S2's capacity controller acts on locally is
+reported per window, so S1 can see whether evaluation throughput is being bought at a client's expense. It must work at any deployment location — laptop,
 container, Firecracker host, cloud, air-gapped site — with pluggable transports.
 
 ## Owned data

@@ -11,6 +11,13 @@ seeded workload through them, and producing the Traces from which fitness is com
 output and an Agent produces an execution pattern, a Swarm produces **metrics and macro-level communication**.
 It is where primary evaluation happens, and it is the thing that is bound to a protocol and served.
 
+A Swarm is therefore the same object in both zones, with two modes. **Inbound** it runs its own seeded workload
+with payloads retained, every role available (including `judge` and `adversary`) and full Traces stored — this is
+where anything that reads text is measured. **Deployed** the same Swarm serves real clients, and its evaluation
+is the live one (C11): the workload generator is replaced by real arrivals, the internal cohort and shadow
+mirrors supply the comparison runs, metrics are computed in memory and the traces are dropped. The Swarm's
+declared `metrics` must therefore mark which are live-eligible (C3); the rest are only ever computed inbound.
+
 ## Owned data
 - **Swarm Unit** (L3, unit.md): `members` maps role slots to Agents with a `mutability`
   (`subject | frozen | co_evolving`), plus connector bindings, the workload dataset and metric refs;
@@ -19,7 +26,10 @@ It is where primary evaluation happens, and it is the thing that is bound to a p
 - **SwarmInstance** (never hashed): the live set of Agent Instances, the workload generator's state, the
   simulated-service state, and the causal clock.
 - **Workload**: a `Dataset` of `kind: workload` plus a seeded arrival process. The generator sits at the Swarm
-  boundary and is **not** an Agent — user input arrives exactly as a real client's would, through the front.
+  boundary and is **not** an Agent — user input arrives exactly as a real client's would, through the front. In a
+  deployed Swarm the generator is absent: real traffic is the arrival process, and the only generated runs are
+  the cohort's `Evaluation` tasks, which carry the same seeds and task ids as the incumbent's so the comparison
+  stays paired.
 - **RunResult**: `{ experiment, seed, trace_ref, summary }`; the metrics themselves are C3's.
 
 ## Interfaces

@@ -8,7 +8,14 @@ Service: S1 → registry (pull-based). Rollout is executed by S2. Depends on con
 The only path from S1 (inbound zone) to S2. A candidate Unit is proposed, put through gates, approved by
 append-only events, lowered deterministically into a signed bundle, and published to the registry (outbound
 zone). S2 pulls, verifies and rolls out. Nothing is pushed into S2 and nothing crosses zones except a published
-bundle.
+bundle and the signed `DeploymentPolicy` (bundle.md), which allocates capacity and shares but never behaviour.
+
+Promotion has **two steps** since the deployment evaluates itself (C11):
+1. **Into the cohort** — a gated candidate ships as an `internal` member of a bundle. It runs on the live system
+   under internal runs only, never serving a client, and its `LiveFitness` comes back as telemetry.
+2. **Into service** — once the live evidence satisfies the gates, the candidate ships again as a `front` member.
+That second bundle is the change a human incorporates in the UI (C10). Both steps are ordinary signed bundles, so
+"it optimises itself while deployed" never means "something unverified started serving traffic".
 
 ## Zones
 | Zone | Contents | Jurisdiction | Mutability |
@@ -39,19 +46,23 @@ separate connections, credentials and rate limits, so an experiment can never st
 ## Inputs / Outputs
 In: a candidate `HashId` (a Swarm or an Agent set, possibly a router lineage with its priors); evidence
 (evaluation Traces, metric distributions, genealogy, the currently active hash for the same function,
-adversarial results); approval events; demotion and drift signals derived from telemetry.
+adversarial results); **live evidence** — the `LiveFitness` distributions telemetry brought back for the
+candidate as a cohort member and for the incumbent, paired over the same `Evaluation` seeds and task ids;
+approval events; demotion and drift signals derived from telemetry.
 Out: events `promotion_proposed`, `gate_result` (one per gate), `approved` / `rejected`, `bundle_published`,
-`export_performed`, plus negative-signal `experiment_outcome` events for failed gates and demotions; and the
-`Bundle` itself, published to the registry.
+`export_performed`, plus negative-signal `experiment_outcome` events for failed gates and demotions; the `Bundle`
+itself, published to the registry; and the signed `DeploymentPolicy` when shares, states or the capacity policy
+change.
 
 ## Interfaces
 ```
-propose(candidate, baseline?, rollout_plan) -> proposal_id
+propose(candidate, baseline?, rollout_plan, exposure: front | internal) -> proposal_id
 run_gates(proposal_id) -> [gate_result]          // idempotent; a rerun appends, never overwrites
 approve(proposal_id, approver, decision, rationale, scope)
 build(proposal_id) -> Bundle                     // only when required gates passed and approvals satisfy policy
 publish(bundle) -> registry_ref                  // store.md publish, the privileged inbound→outbound operation
-export(policy, scope) -> Dataset                 // outbound → inbound, sanitised
+export(policy, scope) -> Dataset                 // outbound → inbound, sanitised; default share 0 (opt-in)
+set_policy(deployments, capacity) -> DeploymentPolicy   // signed like a manifest; allocation only, never code
 list_pending ; explain(proposal_id)              // for the C10 dashboard
 ```
 
@@ -81,12 +92,32 @@ For a router candidate: priors reference only members in the same closure, `mani
 Insufficient samples gives `inconclusive`, which blocks like `fail` but is recorded distinctly, so "we do not
 know" never reads as "it failed".
 
+**Live evidence, and what it can and cannot settle.** Cohort evidence from production is paired by construction
+(same `Evaluation`, same seeds, same task ids as the incumbent) and is the best evidence there is for latency,
+cost, token use, completion and any content-free checker — it is measured on the real distribution of traffic,
+under the real provider, at the real load. It cannot settle anything that needs to read the text, because nothing
+is stored (store.md), so quality metrics that read outputs stay inbound on synthetic or exported datasets. A
+promotion to `front` therefore needs both: live evidence for the operational metrics and inbound evidence for the
+text-reading ones. Two further rules keep live evidence honest:
+- Runs that ended `preempted` are `unscored` with that reason and never count against the candidate (types.md).
+- A comparison may not mix windows from different bundles, price tables or encoder versions, exactly as it may
+  not mix them inbound; the window's `bundle` hash is part of the evidence.
+
 ## Approval
 - One event shape for every approver type: `approved` / `rejected` with `actor` (`human:<id>` or
   `optimizer:<id>`), `subject` = the candidate hash, `data` per events.md (`decision`, `reason`, `scope`,
   `policy_hash`, `expires?`), `evidence` = the `gate_result` events reviewed.
 - **Phase 1 (now): human.** Policy requires at least one human approval; four-eyes (two distinct approvers) is a
   config option and is the default for any change that alters an advertised function's schema.
+- **Incorporation happens in the UI** (C10): a proposal with its live and inbound evidence, its diff against the
+  incumbent and its effect sizes is presented, and approving it is what builds, signs and publishes the bundle.
+  The loop that *produces* proposals is continuous and automatic; the step that puts one in front of a client is
+  a decision someone takes.
+- **Promotion into the cohort is the lighter gate.** A candidate going in as an `internal` member faces the
+  stability, service-validity, budget and zone-cleanliness gates (it will consume real capacity and real tokens),
+  but not non-inferiority — measuring that is what the cohort is for. It still needs an approval; the policy may
+  declare cohort admission an Optimizer-approvable class from the start, because an `internal` member cannot
+  reach a client.
 - **Phase 2: the Optimizer** may approve a declared low-risk class. The event shape is identical; only `actor`
   differs. The promotion service still evaluates the gates from independent evidence and performs the copy, so
   the Optimizer never grades its own proposals and never writes to outbound.
@@ -148,8 +179,10 @@ The only backward flow of data, and it is data, never control.
 - **Sanitisation**: exported items pass a programmatic sanitiser (the same default-deny allowlist as the
   scrubber, plus configured redaction patterns) and are stored as a `Dataset` with `source: exported` and
   `sanitised: true`, so any result derived from production data is identifiable downstream.
-- **Volume and retention**: at most a configured share of traffic (default 1%), sampled deterministically by
-  `hash(request_id)`, retained under the `standard` class (90 days) unless promoted to a pinned evaluation set.
+- **Volume and retention**: **default share 0 — export is off until a deployment turns it on.** Production keeps
+  no data (store.md), and an export is the one deliberate exception to that, so it is opt-in rather than a 1%
+  default. When enabled, at most the configured share of traffic, sampled deterministically by `hash(request_id)`,
+  retained under the `standard` class (90 days) unless promoted to a pinned evaluation set.
 - Every export appends an `export_performed` event with the policy hash, scope and record count.
 - **Shadow mirroring needs no extra consent beyond `no_sample`**: a mirrored run produces no external effect
   (there are none by design), returns nothing to the caller, and stores no payload the original would not. The
@@ -158,7 +191,10 @@ The only backward flow of data, and it is data, never control.
   tenant, for example). Like every use of the flag this can only tighten — a request may set it, never clear it.
 
 ## Invariants
-- The only path S1 → S2 is a published, signed bundle; the registry is pull-only.
+- The only paths S1 → S2 are a published, signed bundle and a signed `DeploymentPolicy`; both are pull-only, and
+  a policy can change allocation only — never a Unit, never a closure.
+- A candidate reaches client traffic only as a `front` member of a bundle whose gates passed on both live and
+  inbound evidence and whose approval someone recorded.
 - Every bundle's `evidence` includes the passing required gates and approvals; missing evidence prevents build.
 - Gate and approval logs are append-only; demotion appends events, never deletes.
 - Build is deterministic and semantics-preserving; a bundle contains no `adversary`, no `judge` and no inbound
@@ -184,6 +220,11 @@ The only backward flow of data, and it is data, never control.
   alpha slice; fixed-`n` is used for the final non-inferiority call so the gate's error rate is exactly the one
   recorded.
 - **Optimizer approval qualifies by measurement** (above), is class-scoped, and is revoked by a single demotion.
+- **Two-step promotion (cohort, then service)** rather than one. It costs a second bundle per candidate and buys
+  the thing the whole design is for: the decision to serve a candidate is made on evidence from the live system,
+  not from a simulation of it, while nothing unverified ever runs there.
+- **Export defaults to off** (above). "Evaluation on the live system" and "we keep production data" are
+  independent choices, and only the first one is in the architecture.
 - **Release sets handle multi-bundle atomic promotion** (bundle.md) rather than a transactional registry.
 - **Key management**: an offline root key plus 90-day signing keys, rotation by overlap, revocation through the
   feed (bundle.md). Threshold signatures are out of scope for this version — one signing service with an offline
@@ -195,4 +236,5 @@ The only backward flow of data, and it is data, never control.
 `bundle` (manifest, RolloutPlan, Registry, RevocationFeed, release sets, key hierarchy), `store` (publish,
 events, zones), `events` (`promotion_proposed`, `gate_result`, `approved`, `rejected`, `bundle_published`,
 `rollout_stage`, `rolled_back`, `demoted`, `export_performed`), `metric` (PairedComparison, ConstraintSet),
-`trace-event` (evidence Traces), `telemetry` (inbound ingestion of S2 state), `types` (Dataset, Budget).
+`trace-event` (evidence Traces), `telemetry` (inbound ingestion of S2 state, `LiveFitness` as gate evidence), `types` (Dataset, Budget,
+RunClass), `bundle` (`BundleMember` exposure, `DeploymentPolicy`, `CapacityPolicy`).

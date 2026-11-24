@@ -43,6 +43,9 @@ tested, layers 4–5 are the algorithms that operate on them. Their learned para
 | Meta-Optimizer | layer-5 planner (MCMC baseline, GA/QD, RL) | C7 |
 | Router | locates a task in task-class space and picks a locked member | C8 |
 | Zones | inbound (experiments, S1) vs outbound (deployed, S2) | C9 |
+| Run class | `front_facing` (a client waits) / `internal_eval` (the system measuring itself) / `shadow` (a discarded mirror) | `contracts/types.md`, C2, C11 |
+| Internal cohort | `internal` members of a bundle: locked candidates evaluated live, never routed a client request | `contracts/bundle.md`, C11 |
+| Live fitness | a metric distribution from production, with no samples behind it | `contracts/telemetry.md`, C3 |
 | Bundle | the signed, immutable S1 → S2 artifact | `contracts/bundle.md`, C9 |
 
 ## Design principles
@@ -53,7 +56,10 @@ tested, layers 4–5 are the algorithms that operate on them. Their learned para
    fitness is always statistical.
 4. **One structure, many levels.** Nodes, Agents, Swarms, Optimizers and Meta-Optimizers are all Units: same
    fields, same lifecycle, same metrics and ancestry machinery; only the adapter differs.
-5. **Closed loop.** Every run is traced, scored, stored and available for resampling.
+5. **Closed loop, and it stays closed in production.** Every inbound run is traced, scored, stored and available
+   for resampling. A deployed run is traced, scored and then *dropped*: the deployment evaluates itself on live
+   traffic and on an internal cohort inside its signed bundle, and only the metric distributions leave. The loop
+   is continuous; what changes production is still a signed artifact someone incorporated in the web interface.
 6. **Language-neutral contracts.** The contracts define schemas and behaviour; the implementation stack is a
    separate decision (`docs/stack.md`).
 7. **External endpoints are static, versioned and read-only.** Nodes and Agents never write outside; the only
@@ -63,7 +69,10 @@ tested, layers 4–5 are the algorithms that operate on them. Their learned para
 9. **Right-sized by selection.** The goal is a system of optimal size for its task: never too big (too many
    Agents or Nodes, too long prompts, too many hops) and never so small that quality suffers. Size and cost are
    minimised with quality as a floor.
-10. **Statistics are not optional.** Every comparison is paired, over shared tasks and seeds, with an interval
+10. **A client's latency is never spent on ourselves.** Every run carries a class, and internal evaluation is
+    preemptible, headroom-only work. The system is allowed to evaluate slowly; it is not allowed to make a caller
+    wait for that.
+11. **Statistics are not optional.** Every comparison is paired, over shared tasks and seeds, with an interval
     and a correction. One number is never a result.
 
 ## Reading order

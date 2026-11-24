@@ -54,6 +54,12 @@ Budget      { tokens: int, cost: number, wall_ms: int, runs: int }      // unit 
 Population  { id, kind, level, shard: ShardId }
 PriceTable  { id: HashId, entries: [{ connection: Name, model_id, in_per_mtok, out_per_mtok }],
               currency: "USD", effective_from: Timestamp }              // hashed; cost = tokens × price at run time
+RunClass    = front_facing | internal_eval | shadow
+// Scheduling priority AND storage policy in one field. `front_facing` is a request a client is waiting on and is
+// the only class with a latency guarantee; `internal_eval` is the system evaluating itself on the live system;
+// `shadow` is a mirrored copy of a front-facing request whose result is discarded. The class is assigned by the
+// service that admits the run, never by a caller (front.md), and it can only be lowered, never raised.
+// `internal_eval` and `shadow` runs are preemptible and store no payloads (store.md, C11).
 JobRef      = { id: string, kind: "experiment" | "eval" | "probe" | "build" | "ingest", shard: ShardId,
                 attempt: int, created: Timestamp }
 Job         { ref: JobRef, payload: RunRequest | Evaluation | HashId, budget: Budget,
@@ -79,11 +85,15 @@ ErrorCode =
     bad_request | unknown_function | schema_violation | unauthorized | quota_exceeded
   | overloaded | no_route | session_reset | refused
   // run-level (trace-event.md FailureKind)
-  | limit_exhausted | guard_error | connector_error | provider_error | infra_error | killed
+  | limit_exhausted | guard_error | connector_error | provider_error | infra_error | killed | preempted
   // build / verification
   | corrupt_object | unknown_parent | not_writer | metric_version_mismatch | price_table_mismatch
   | closure_missing | signature_invalid | revoked | hash_spec_unsupported
 ```
+`preempted` is an `internal_eval` or `shadow` run stopped to give capacity back to front-facing traffic (C2, C11).
+Like `infra_error` it is recorded and never counted against a candidate's fitness: it says nothing about the
+candidate, only about the load at the time.
+
 `refused` is the completion value when a request is declined before any node runs (revocation, kill-switch,
 policy). `no_route` is the router having no eligible member, including no generalist default. `overloaded` is
 backpressure; `session_reset` tells a client its pinned deployment is gone and the session must restart.

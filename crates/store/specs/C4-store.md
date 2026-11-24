@@ -90,7 +90,10 @@ the completed `Event` (`hash.md`, tag `event`), so the record's digest *is* the 
 `prev`; the store also `put`s that record in the object space, which is what makes an event referenced as
 `evidence` retrievable by hash.
 
-**Blobs and `no_sample`.** `put_blob` is refused with `PayloadForbidden` when the owning Trace is `no_sample`.
+**Blobs, `no_sample` and run class.** `put_blob` is refused with `PayloadForbidden` when the owning Trace is
+`no_sample` **or** when its `RunClass` is `internal_eval` or `shadow` (types.md): live evaluation keeps the
+metric, never the data, so a payload for such a run must not exist in any zone. Both reasons are read from the
+owner's own bytes as well as from the index marker, so a lost or missing marker cannot let a payload through.
 The flag is stored with the owner record and can only be tightened. Blobs carry a `Retention` class (store.md);
 expiry writes a tombstone event and a physical GC follows — the hash and the event remain, the bytes become
 `Expired`. Large blobs are chunked (content-defined chunks, Merkle manifest) so workspaces dedupe; the manifest

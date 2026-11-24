@@ -16,7 +16,8 @@ agents.
 ## Goals
 - Deployable to an arbitrary location; isolation is a driver (process or container for dev, Firecracker for
   production).
-- Two services, each horizontally scalable. S1 has a dashboard; S2 is headless.
+- Two services, each horizontally scalable. S1 serves the web interface — the management surface for the served
+  endpoints, the live swarms and the changes the system proposes for itself; S2 is headless.
 - S1 creates, tests and maintains lineages from a hashable primitive set; lineages use advertised endpoints.
 - Meta-Optimizer: MCMC baseline, GA/QD and RL, with LLM proposers allowed as a recorded, reproducible operator.
 - Metrics are programmatic. Judge, adversary and comparator Agents are built from the same primitives, carry a
@@ -25,13 +26,26 @@ agents.
 - Runtime "triangulation" locates a task prompt in task-class space; most prompts yield one or two workflow runs.
 
 ## Decisions carried throughout
-- Production is **select-only**: S2 routes to locked lineage members; nothing mutates in production.
+- Production is **select-only**: S2 routes to locked lineage members; nothing mutates in production. The loop
+  nevertheless runs *while deployed* — a bundle carries an `internal` evaluation cohort that live traffic never
+  reaches, so the system measures candidates on the real system without anything unverified serving a client.
+- **Front-facing latency is the one hard guarantee.** Runs are classed (`front_facing | internal_eval | shadow`);
+  internal work is admitted only out of headroom, is preempted before a client ever queues, and the deployment
+  load-balances its own capacity by a local closed loop on the observed p99.
+- **Live evaluation keeps no data.** Production stores no Trace and no payload; metrics are computed in memory
+  and leave as distributions. The numbers are the result; the traffic is not kept.
+- **The web interface is the management surface** (S1-served; S2 stays headless): it advertises the served MCP,
+  A2A and OpenAI-compatible endpoints, displays and manages the live swarms, and is where the changes the system
+  proposes for itself are incorporated — by publishing a signed bundle or a signed allocation policy that S2
+  pulls, never by calling into S2.
 - **No external writes.** The only writable surface is a task-scoped memory buffer; persistence is a read-only
   pinned workspace snapshot plus read-only versioned knowledge stores.
 - Graph rules: guarded edges, bounded cycles, typed state channels with declared reducers, no Agent nesting
   (Agents meet only in a Swarm) — all statically checkable and bounded.
 - The router/planner is an evolvable Agent lineage using task-class priors and cheap probes.
-- Handoff is **pull-based signed bundles**; telemetry is one-way and content-free. S1 has no write path into S2.
+- Handoff is **pull-based signed bundles** plus a signed allocation policy (shares, states, capacity — never
+  code); telemetry is one-way and content-free, and now carries the live evaluation results. S1 has no write path
+  into S2.
 - Optimizer and Meta-Optimizer state is sharded by population, one writer per shard; run workers are stateless.
 - Every comparison is paired, over shared tasks and seeds, with an interval and a multiple-comparison
   correction.
@@ -55,8 +69,8 @@ Index, dependency order and extension rules: `crates/contracts/specs/README.md`.
 | C7 | `meta-optimizer` | `crates/meta-optimizer/specs/C7-meta-optimizer.md` | S1 | MCMC baseline, GA/QD, RL with unrolls, subtree reward, equal-budget baselines |
 | C8 | `router` | `crates/router/specs/C8-router.md` | S1 (train) / S2 (serve) | task-class descriptor, priors, contextual selection, probes, planner |
 | C9 | `promotion` | `crates/promotion/specs/C9-promotion.md` | S1 → registry | zones, gates, approval, export policy, bundle build and signing |
-| C10 | `s1` | `crates/s1/specs/C10-s1-service.md` | S1 | API, workers, shard coordination, budgets, telemetry sink, dashboard |
-| C11 | `s2` | `crates/s2/specs/C11-s2-service.md` | S2 | bundle pull and verify, routing, isolation, headless serving, telemetry out |
+| C10 | `s1` | `crates/s1/specs/C10-s1-service.md` | S1 | API, workers, shard coordination, budgets, telemetry sink, the management web interface |
+| C11 | `s2` | `crates/s2/specs/C11-s2-service.md` | S2 | bundle pull and verify, routing, isolation, headless serving, run classes and capacity control, live evaluation, telemetry out |
 | C12 | `obs` | `crates/obs/specs/C12-observability.md` | both | event and trace pipeline, scrubbing, kill-switch, drift, OTel export |
 | C13 | `swarm` | `crates/swarm/specs/C13-swarm.md` | both | the level-3 environment: role slots, workload, connectors, evaluation runs |
 

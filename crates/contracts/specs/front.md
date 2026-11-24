@@ -1,7 +1,8 @@
 # Contract: Front (request/response)
 
-The protocol-neutral request shape used by S2's front and S1's inbound test front. Protocol adapters (MCP, A2A,
-optional OpenAI-compatible) translate to and from it and hold no business logic.
+The protocol-neutral request shape used by S2's front and S1's inbound test front. Protocol adapters (MCP, A2A and
+OpenAI-compatible) translate to and from it and hold no business logic. All three are advertised by default: they
+are the deployment's public surface, listed in the management UI (C10) with their schemas and versions.
 
 ```
 TaskRequest {
@@ -37,6 +38,13 @@ ProtocolAdapter {
   on, so a tenant default of "off" cannot be overridden by a caller. Streaming is always off in inbound
   experiments and never affects fitness. Stage labels come from `bundle.stage_labels`, else the node id.
 - `no_sample` is carried end to end and can only tighten handling.
+- **`RunClass` is assigned, not requested.** Every client request admitted by a front becomes a `front_facing`
+  run (types.md); a caller cannot set, raise or forge the class, and no protocol field maps to it. A front may
+  *lower* a request to `shadow` when it is a mirror. Front-facing runs are the only ones with a latency
+  guarantee, so the class is a service decision, never a client's.
+- **Back-pressure sheds internal work first.** `overloaded` is returned to a client only when front-facing demand
+  alone exceeds capacity: before that, the deployment preempts its own `internal_eval` runs (C11). A caller can
+  therefore never be queued behind the system evaluating itself.
 - Errors use the `ErrorCode` taxonomy (types.md). `refused` covers revocation and kill-switch; `overloaded`
   carries `retry_after_ms`; `session_reset` tells the client to restart the session.
 

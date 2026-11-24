@@ -6,11 +6,12 @@ Trace {
   run_id, unit: HashId, seed, job_ref: JobRef?, evaluation: HashId?, variant: VariantRef?, task: TaskId?,
   workspace_ref: HashId?, connector_versions: map<Name, Version>, price_table: HashId,
   status: complete | incomplete | terminated, failure: FailureKind?,
+  class: RunClass,                       // types.md; front_facing runs are the only ones with a latency guarantee
   spans: [Span], verdicts: [CheckerVerdict],
   summary: ContentFreeSummary, flags: { no_sample: bool }
 }
 FailureKind = limit_exhausted | guard_error | schema_violation | connector_error | provider_error
-            | infra_error | killed                                    // subset of types.md ErrorCode
+            | infra_error | killed | preempted                        // subset of types.md ErrorCode
 Span {
   id: SpanId, parent_span: SpanId?, node_run: NodeRun, unit: HashId,
   kind: model | tool | store_read | guard | reducer | checker | judge | router | internal,
@@ -52,10 +53,11 @@ Event { id: EventId, shard: ShardId, seq: int, prev: HashId, ts: Timestamp, acto
 
 ```
 Outcome { kind: ok | compile_error | operator_error | node_fail | run_error | limit_exhausted
-                | budget_exhausted | eliminated_early | infra_error,
+                | budget_exhausted | eliminated_early | infra_error | preempted,
           stage: compile | node | agent | swarm,
           unit: HashId, parents: [HashId], operator: string, evaluation: HashId?, result: FitnessRecord?,
           detail_ref: BlobRef?, cost: Budget }
 ```
-Infra failures are recorded but never counted against a candidate's fitness. Selection never deletes; it appends
+Infra failures and preemptions are recorded but never counted against a candidate's fitness — the first says
+nothing about the candidate, the second only that the live system was busy (C2). Selection never deletes; it appends
 events.

@@ -6,6 +6,8 @@ Depends on contracts: `unit`, `trace-event`, `driver`, `worker`, `types`, `schem
 ## Purpose
 Run Instances of Nodes, Agents and Swarms under `Limits`, with strong isolation, stateless workers, parallel
 execution along the causal frontier, and a causal, provider-annotated Trace from which all metrics are derived.
+Runs are classed (`RunClass`, types.md), and the class is a scheduling guarantee: a `front_facing` run is one a
+client is waiting on and is never delayed by the system evaluating itself.
 
 ## Owned data
 - **RunRequest** (unit.md); the runtime additionally accepts a `CompiledUnit` in place of the hash, and
@@ -63,6 +65,33 @@ for fast warm start). Sandbox cpu/mem/wall limits derive from `Limits`; egress i
   per-connection token bucket shared by every Instance on the host and allocates **fair-share by run**, not by
   node: a run holding a reservation keeps it for its next call, so one wide fan-out cannot starve a sibling run.
   A run blocked longer than its remaining `max_wall_ms` ends `limit_exhausted` rather than queueing indefinitely.
+- **Two-tier metering by class.** The bucket is split: `front_facing` runs draw from the whole bucket,
+  `internal_eval` and `shadow` runs draw only from what is left after the configured front-facing reserve
+  (`CapacityPolicy.front_reserve`, bundle.md). Fair-share applies *within* a class, never across one: an internal
+  run never holds a token a front-facing run is waiting for, and a queue of internal runs is always served after
+  the front-facing queue is empty. The reserve is enforced on admission *and* at every call, so a long internal
+  run cannot keep a reservation it would not be granted now.
+
+## Admission, priority and preemption
+The scheduler is the place where the latency guarantee is actually kept, so the rules are flat and few.
+- **Admission**: a `front_facing` run is admitted whenever an instance slot and the reserve allow it; an
+  `internal_eval` or `shadow` run is admitted only out of headroom — capacity minus the reserve minus observed
+  front-facing demand — and never when the front-facing queue is non-empty.
+- **Priority is strict, not weighted.** No weighting, no ageing, no priority inversion: there is no lock,
+  instance or token an internal run can hold that a front-facing run needs, because the two classes never share a
+  reservation and never share an instance (C11 keeps separate pools).
+- **Preemption**: when front-facing demand rises, internal runs are preempted oldest-first. Each gets
+  `CapacityPolicy.preempt_grace_ms` (default 1 s) to checkpoint — the existing on-demand `Checkpoint`, so a
+  preempted evaluation resumes later rather than starting over — and is then cancelled. The run ends
+  `status: terminated`, `failure: preempted`, `completion: error`; its spans so far stay in the Trace.
+- **`preempted` is infra, not candidate signal** (types.md): like `infra_error` it never counts against fitness,
+  and a metric computed over a window reports the preempted runs as `unscored` with that reason (C3). A candidate
+  is never penalised for having been evaluated at a busy moment.
+- **Cost of preemption is charged, the result is discarded.** Tokens already spent are real and are recorded;
+  partial output is not scored unless the Unit declares a reachable fallback exit, exactly as for limit
+  exhaustion.
+- The class comes from the `RunRequest` and is only ever lowered inside the runtime (a mirror of a front-facing
+  run is `shadow`); nothing in the runtime raises a class.
 
 ## Trace emission
 - One Span per node invocation with the fields in trace-event.md, including `happens_before` (predecessor Span ids
@@ -79,6 +108,8 @@ for fast warm start). Sandbox cpu/mem/wall limits derive from `Limits`; egress i
 
 ## Invariants
 - No run can exceed its `Limits`; overshoot is bounded by at most one in-flight reservation and is recorded.
+- A `front_facing` run never waits on a resource held by an `internal_eval` or `shadow` run.
+- A run's class is never raised; a Trace records the class it actually ran under.
 - No external write is possible: the sandbox has no write-capable capability, and the only writable surface is the
   per-run memory buffer, discarded at the end.
 - Runs are mutually isolated: no shared memory, files or sockets across Instances; each connector call is
@@ -121,8 +152,17 @@ for fast warm start). Sandbox cpu/mem/wall limits derive from `Limits`; egress i
   unrecomputable from summaries.
 - **Fair-share rate limiting by run** (above), because per-node fairness lets a wide fan-out monopolise a
   connection and makes a Swarm's cost depend on its own parallelism.
+- **Strict class priority with preemption, not weighted fair queueing.** Weights make the latency guarantee
+  statistical and the failure mode hard to reason about under burst; strict priority plus "internal work is
+  preemptible and checkpointable" makes it structural. The price is that internal evaluation throughput is
+  whatever the front-facing load leaves, which is the intended trade: evaluation is allowed to be slow, a client
+  is not.
+- **Preemption checkpoints rather than kills where it can.** Evaluation runs are often long (a Swarm horizon),
+  and a checkpoint at a step boundary already exists for migration, so a preempted run resumes on the next quiet
+  window instead of wasting the tokens it has spent.
 
 ## Contracts used
-`unit` (Instance, InstanceState, Checkpoint, RunRequest, Limits), `trace-event` (Trace, Span, ProviderMeta,
+`unit` (Instance, InstanceState, Checkpoint, RunRequest with `class`, Limits), `trace-event` (Trace, Span, ProviderMeta,
 ContentFreeSummary, FailureKind), `driver` (Driver, SandboxImage, SnapshotRef, Health, SpanEvent, EgressPolicy,
-CredentialPolicy), `worker` (dispatch, JobResult), `types` (Budget, PriceTable, SpanId, ErrorCode).
+CredentialPolicy), `worker` (dispatch, JobResult), `types` (Budget, PriceTable, SpanId, ErrorCode, RunClass), `bundle`
+(`CapacityPolicy` reserve and grace, read as configuration).

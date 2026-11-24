@@ -6,9 +6,15 @@ through contract types and the plug-in points named here.
 
 ## Purpose
 Hosts Service 1: the API, the shard coordinator, the run-worker fleet, the job queue, budget accounting, the
-telemetry sink, the dashboard and auth. It turns "evolve lineage X under budget B" into stateless run jobs,
-persists results through the Store contract, and surfaces everything — lineages, distributions, fronts, failures,
-promotions, drift — to humans. It deploys anywhere: every backend is chosen by config.
+telemetry sink, the **web interface** and auth. It turns "evolve lineage X under budget B" into stateless run
+jobs, persists results through the Store contract, and surfaces everything — lineages, distributions, fronts,
+failures, promotions, drift — to humans. It deploys anywhere: every backend is chosen by config.
+
+The web interface is the system's management surface, not a read-only dashboard. It is where the served surface
+is visible (the MCP tools, A2A skills and OpenAI-compatible routes each deployment advertises), where live swarms
+are inspected and managed, and where the changes the system proposes for itself are **incorporated**. It is
+served by S1 only: S2 stays headless, is never called by the UI, and receives every decision the same pull-only
+way it receives bundles (a signed `DeploymentPolicy`, bundle.md).
 
 ## Owned data
 Service state, in the `inbound` zone or the service's own control DB. Nothing here is hashed content.
@@ -19,6 +25,11 @@ Service state, in the `inbound` zone or the service's own control DB. Nothing he
 - **Budget ledger**: append-only `{budget_id, job_id, run_id, spent: Budget, ts}` plus
   `BudgetAccount {id, scope: global|experiment|lineage, cap, soft_cap, window, state}`.
 - **Dashboard read models**: materialised projections of Events and Traces; rebuildable, never a source of truth.
+  They include the live view of each deployment built from telemetry: advertised functions per adapter, member
+  exposure and shares, `LiveFitness` per member and metric, and the `CapacityReport` series.
+- **Deployment policy drafts**: the editable `{deployments, capacity}` a human is working on, its diff against
+  the policy in force, and the signed `DeploymentPolicy` once issued. The draft is service state; the signed
+  policy is an artifact in the registry.
 - **Identity**: users, roles, API tokens (stored hashed), service identities for workers, and the registered
   public keys of S2 instances allowed to push telemetry.
 - **Kill-switch state**: `{scope, engaged_by, ts, reason}`, mirrored as a `kill_switch` Event; for bundle scope
@@ -99,9 +110,44 @@ so Qdrant is never on the critical path for a developer or for CI.
 - `PriceTable` is pinned per model id and recorded in `Trace.price_table`; a price change is a new table, never a
   retroactive edit of the ledger.
 
-## Dashboard
-Served from the API's read endpoints; read-only except approval and kill-switch actions, which need elevated
-roles and each append an Event naming the human actor.
+## Web interface
+Served from the API's read endpoints (static SPA plus JSON and SSE). Read-only except the actions listed under
+*Management* below; every one of those needs an elevated role and appends an Event naming the human actor. The
+UI never talks to S2: an action either changes S1 state or produces a signed artifact that S2 pulls.
+
+### Served surface (the deployment's public face)
+For each active bundle, what the outside world can actually call: every advertised `FunctionDescriptor` rendered
+per protocol — MCP tool, A2A skill, OpenAI-compatible model id or file route (front.md) — with its input and
+output schema, scope (`invocation` or `session`), timeout, the adapter name and version serving it, the endpoint
+URL, the auth mode and the per-caller quota in force. Deployment state, traffic share and isolation level sit
+beside each one, and the same page is the place a caller's integration is checked against: schemas shown here are
+the ones the front validates.
+
+### Swarms and members
+A live view per deployment, from telemetry: the Swarm's role slots and the member Units filling them, each
+member's `exposure` (`front` or `internal`), share, request counts by class, latency and cost distributions, and
+its `LiveFitness` per metric with `n` — never a bare number. The internal cohort is shown as what it is: locked
+candidates being measured on the live system, with how much capacity they are getting and how often they were
+preempted. Lineage, archive and fitness views (below) are reachable from any member.
+
+### Management (the actions that exist)
+- **Incorporate a proposal** — the promotion queue is the main workflow: candidates with their gate evidence
+  (live and inbound), the diff against the incumbent, effect sizes with intervals, and Approve / Reject.
+  Approving writes `approved{actor, evidence}` and triggers `build_bundle`; that is how a proposed change reaches
+  production. Four-eyes is on by default for schema-changing promotions. An *auto-incorporate* switch per change
+  class exists and is **off by default**; turning it on is the C9 Phase-2 hand-over and is itself an audited
+  event.
+- **Allocation** — edit shares and states across deployments and the `CapacityPolicy` (SLO target, front-facing
+  reserve, internal ceiling, shadow share). Saving produces a new signed `DeploymentPolicy`; the UI shows the
+  diff, who signed it, its version, and which instances have picked it up. The capacity *controller* itself is
+  not editable per request: it is a closed loop inside S2, and the UI sets its bounds, not its decisions.
+- **Pause, drain, retire** a deployment or a member, and **engage the kill-switch** (scope global / experiment /
+  lineage / bundle). A bundle-scoped engage appends a `Registry.revoke_bundle` entry that S2 picks up from the
+  feed it already pulls — never a direct write to S2.
+- **Experiments**: submit, pause, resume, cancel, and set budgets.
+- Nothing in the UI can edit a Unit, a bundle or an event. Changing behaviour means a new Unit, evaluated.
+
+### Evolution views
 - **Lineage tree** from `lineage()` and `link` provenance (operator, seed, `programmatic|llm_proposed`, diff
   view); retired and quarantined nodes stay visible.
 - **Fitness distributions** per metric per Unit or subtree, always with `n`; a comparison shows effect size and
@@ -112,9 +158,9 @@ roles and each append an Event naming the human actor.
   operator, failure kind and lineage. Failure rate per operator is a first-class chart.
 - **Funnel**: `funnel_stage` events as a stage-by-stage drop-off, with the thresholds in force.
 - **Budgets**: spend against caps by scope and time; per-worker throughput.
-- **Promotion queue**: candidates with their `gate_result` evidence, links to evaluations, a diff against the
-  current production member, and Approve/Reject. Approval writes `approved{actor, evidence}` and then triggers
-  `build_bundle`. Four-eyes is a config option, on by default for schema-changing promotions.
+- **Capacity and latency**: the front-facing p99 against the SLO target, the internal share the controller
+  settled on and why, preemption counts, and shed/`overloaded` counts — the evaluation-versus-latency trade made
+  visible rather than inferred.
 - **Drift and kill-switch**: `drift_detected` and `sentinel_result` events with the provider-meta change and the
   metric shift; a kill-switch panel scoped to global / experiment / lineage / bundle. Engaging it stops dispatch
   immediately, drains leases, and for a bundle appends a `Registry.revoke_bundle` entry that S2 picks up from
@@ -124,9 +170,10 @@ roles and each append an Event naming the human actor.
   payload does not exist.
 
 ## Auth
-- Humans: OIDC (static tokens in dev). Roles `viewer`, `operator` (submit, pause, cancel experiments),
-  `approver` (promotion), `admin` (config, kill-switch release). Kill-switch **engage** is `operator`+;
-  **release** is `admin`.
+- Humans: OIDC (static tokens in dev). Roles `viewer`, `operator` (submit, pause, cancel experiments; drain a
+  member), `approver` (promotion; incorporate a proposal), `admin` (config, capacity policy, auto-incorporate
+  switch, kill-switch release). Kill-switch **engage** is `operator`+; **release** is `admin`. Issuing a
+  `DeploymentPolicy` is `admin`, and the signing service re-checks the request like it does for a bundle.
 - Workers and plug-ins: short-lived service tokens bound to a shard and a job; they may read objects and submit
   results, nothing else.
 - S2 instances: one registered public key each, used only to sign telemetry envelopes; they have no other
@@ -140,6 +187,8 @@ POST /experiments {lineage_root, config_ref, budget} -> Experiment
 POST /experiments/{id}:pause|resume|cancel
 GET  /events?filter&since                       (SSE variant for live)
 GET  /promotions ; POST /promotions/{id}:approve|reject {note}
+GET  /deployments ; GET /deployments/{root}/members ; GET /deployments/{root}/functions
+GET  /policy ; POST /policy {deployments, capacity} -> DeploymentPolicy   (signed; S2 pulls it)
 POST /killswitch {scope, mode, reason} ; DELETE /killswitch/{id}
 POST /telemetry  (S2 → S1, signed envelope)
 Worker:      claim(shard, kinds) -> Job ; heartbeat(job) ; complete(job, JobResult) ; fail(job, error)
@@ -151,7 +200,10 @@ Coordinator: acquire(shard) -> {epoch} ; renew ; release
   stale epoch.
 - Workers are stateless: killing any worker loses no committed state; its leased job reappears after expiry.
 - No code path moves objects from `inbound` to `outbound` except `build_bundle` followed by C9's `publish`,
-  after an `approved` Event whose evidence the gates verified. No S1 component writes to S2.
+  after an `approved` Event whose evidence the gates verified. No S1 component writes to S2, and the web
+  interface is no exception: it produces events, bundles and signed policies, all of which S2 pulls.
+- Live evidence is stored as distributions and events only. S1 never receives, and therefore never stores, a
+  production Trace or payload (telemetry.md).
 - Selection never deletes; the service only appends events.
 - Every Job has `Limits`; reported cost is derived cost; the ledger sum equals the sum of settled run costs.
 - Dashboards are projections: dropping a read model and replaying the log reproduces it.
@@ -192,9 +244,17 @@ Coordinator: acquire(shard) -> {epoch} ; renew ; release
 - **Retention**: Events forever, Traces (the objects) forever, payload blobs tiered per store.md. The dashboard
   therefore always has the numbers and sometimes not the text — which is the intended trade.
 - **No payload view under `no_sample`, for any role** (above).
+- **The UI manages through signed artifacts, not an admin channel.** A management console that called S2 would be
+  an inbound control path into production and would end the one-way rule; a signed `DeploymentPolicy` in the
+  registry gives the same operator experience, is auditable, is replayable, and leaves S2 headless. The latency
+  cost is one pull interval (30 s), which is acceptable for allocation and irrelevant for the capacity controller,
+  which is local and immediate.
+- **Auto-incorporation is off by default.** The optimisation loop runs continuously without a human; the step
+  that changes what a client is served does not, until a deployment has earned it by C9's measured criterion.
 
 ## Contracts used
 `worker` (Queue, Job, JobResult), `store` (lease/Fence, append/link, query/subscribe, publish), `events` (every
 kind the service emits or displays), `trace-event` (Trace, ContentFreeSummary), `telemetry` (ingest endpoint,
-envelope verification), `bundle` (Registry revoke for kill-switch), `types` (Budget, PriceTable, ShardId,
-ErrorCode), `driver` (how workers execute), `front` (the inbound test front).
+envelope verification, `LiveFitness`, `CapacityReport`), `bundle` (Registry revoke for kill-switch,
+`DeploymentPolicy`, `BundleMember`), `types` (Budget, PriceTable, ShardId, ErrorCode, RunClass), `driver` (how
+workers execute), `front` (the inbound test front, the advertised adapters the UI lists).

@@ -28,7 +28,7 @@ contracts except where noted.
 | Vector queries (archive descriptors, task-class regions and priors) | **Qdrant**, reached over its REST API | a separate compose service behind the `VectorIndex` trait (C5, C8); also a rebuildable projection |
 | Isolation (prod) | **Firecracker** via jailer | `driver.md`, `isolation_level: microvm` |
 | Isolation (dev/CI) | process and container drivers | declared level; a weaker driver in prod needs a logged override, and the accepted prod fallback is gVisor/Kata-class only (C11) |
-| External protocols | **MCP and A2A over HTTP** | adapter mappings in `front.md`. ACP is dropped: it was folded into A2A. An OpenAI-compatible adapter stays optional |
+| External protocols | **MCP, A2A and OpenAI-compatible over HTTP** | adapter mappings in `front.md`; all three are advertised by default and listed in the management UI. ACP is dropped: it was folded into A2A |
 | Test / dev / simulation | **docker compose** | S1, S2, Garage, Postgres, and the fake provider |
 
 **Vector search is Qdrant; graph search stays in Postgres.** The two needs are different: genealogy and subtree
