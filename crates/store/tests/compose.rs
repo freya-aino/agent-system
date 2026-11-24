@@ -3,8 +3,8 @@
 //! Ignored by default: these need Postgres and Garage, and the single-binary profile
 //! must stay runnable with no external services (docs/stack.md).
 //!
-//!   docker compose -f deploy/docker-compose.yml up -d
-//!   sh deploy/garage-init.sh
+//!   docker compose up -d
+//!   sh garage-init.sh
 //!   cargo test -p agent-store --features postgres,s3 -- --ignored --test-threads=1
 //!
 //! Every test namespaces its shards and populations by a run id, so a second run
@@ -39,7 +39,7 @@ fn pg_conninfo() -> String {
 fn s3_config() -> S3Config {
     let endpoint = std::env::var(S3_ENV).unwrap_or_else(|_| "http://localhost:59000".into());
     S3Config {
-        // The fixed development credentials `deploy/garage-init.sh` imports.
+        // The fixed development credentials `garage-init.sh` imports.
         access_key: std::env::var("AGENT_STORE_S3_KEY")
             .unwrap_or_else(|_| "GK0123456789abcdef01234567".into()),
         secret_key: std::env::var("AGENT_STORE_S3_SECRET").unwrap_or_else(|_| {

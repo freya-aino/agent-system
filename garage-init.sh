@@ -3,13 +3,13 @@
 # layout, the bucket, and fixed development credentials so no secret has to be
 # copied out of a log.
 #
-#   docker compose -f deploy/docker-compose.yml up -d garage
-#   sh deploy/garage-init.sh
+#   docker compose up -d garage
+#   sh garage-init.sh
 #
 # Idempotent: every step tolerates already having been done.
 set -eu
 
-COMPOSE=${COMPOSE:-docker compose -f deploy/docker-compose.yml}
+COMPOSE=${COMPOSE:-docker compose}
 BUCKET=${BUCKET:-agent-store-test}
 KEY_NAME=${KEY_NAME:-agent-dev}
 # The format Garage expects: "GK" + 24 hex characters, and a 64-hex secret.

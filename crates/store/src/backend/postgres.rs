@@ -21,8 +21,8 @@ use super::{
     ObjectStore,
 };
 
-/// The DDL, embedded so the code and `psql -f deploy/store-schema.sql` agree.
-pub const SCHEMA: &str = include_str!("../../../../deploy/store-schema.sql");
+/// The DDL, embedded so the code and `psql -f store-schema.sql` agree.
+pub const SCHEMA: &str = include_str!("../../../../store-schema.sql");
 
 fn db(e: tokio_postgres::Error) -> BackendError {
     // A unique violation on the log is a lost CAS, not a failure; the caller

@@ -6,8 +6,8 @@
 # Host ports are offset by 50000 (Postgres 55432, Garage 59000, Qdrant 56333) so the
 # stack coexists with whatever else is running on a development machine.
 #
-#   docker compose -f deploy/docker-compose.yml up -d
-#   sh deploy/garage-init.sh          # layout, bucket and the dev access key
+#   docker compose up -d
+#   sh garage-init.sh          # layout, bucket and the dev access key
 #   cargo test -p agent-store --features postgres,s3 -- --ignored --test-threads=1
 #
 # The store applies its own schema (`PostgresBackend::migrate`, which embeds

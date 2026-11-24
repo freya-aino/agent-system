@@ -40,7 +40,7 @@ pub struct S3Config {
 
 impl S3Config {
     /// The compose profile: path-style addressing and Garage's own region name
-    /// (`s3_region` in `deploy/garage.toml`), which the signature must match.
+    /// (`s3_region` in `garage.toml`), which the signature must match.
     pub fn garage(endpoint: impl Into<String>, bucket: impl Into<String>) -> Self {
         S3Config {
             endpoint: endpoint.into(),

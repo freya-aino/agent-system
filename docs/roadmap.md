@@ -25,7 +25,10 @@ crates/
   s2/             C11 binary: bundle pull, router serving, adapters (MCP, A2A), driver host
   seeds/          the seed set (several dedicated Agents) + importer
 web/              Svelte + Vite dashboard (S1 only)
-deploy/           docker-compose.yml (S1, S2, Garage, Postgres, Qdrant, fake provider), devenv.nix
+docker-compose.yml  the stack (S1, S2, Garage, Postgres, Qdrant, fake provider); at the root so it needs no -f
+garage.toml         the compose Garage's configuration, mounted into the container
+garage-init.sh      one-shot layout, bucket and development access key for that Garage
+store-schema.sql    the store's DDL, embedded by the Postgres backend and applicable with psql
 ```
 
 ## Milestones
