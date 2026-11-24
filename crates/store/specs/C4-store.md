@@ -34,19 +34,32 @@ Exactly the contract operations: `put`, `get`, `has`, `link`, `lineage`, `childr
 `subscribe`, `head`, `put_blob`, `get_blob`, `expire_blob`, `lease`, `renew`, `release`, `shard_map`, `publish`,
 `pull`; every argument is zone-scoped.
 
-**Backend SPI** (what a deployment implements; six methods)
-- `blob_put(key, bytes, if_absent)`, `blob_get(key)`, `blob_exists(key)` — key = `<zone>/<algo>/<hex>`.
-- `log_append(zone, shard, expected_head, records) -> new_head` — compare-and-set, atomic per batch.
-- `log_read(zone, shard, from, limit)`.
-- `index_put/index_scan` — derived, rebuildable from the log; the log is the source of truth.
+**Backend SPI** (what a deployment implements)
+- `blob_put(key, bytes, if_absent)`, `blob_get(key)`, `blob_exists(key)`, `blob_delete(key)` — key =
+  `<zone>/<algo>/<hex>`. `blob_delete` serves the GC that follows a blob tombstone and nothing else: objects and
+  events are immutable and never use it.
+- `log_append(zone, log, expected_head, records) -> new_head` — compare-and-set, atomic per batch.
+- `log_read(zone, log, from, limit) -> { records, head }` — the head comes back with every read, so a writer
+  learns where the log is without a second call; `limit: 0` reports only the head.
+- `index_put/index_scan/index_clear` — derived, rebuildable from the logs; the log is the source of truth, and
+  `index_clear` is what makes a rebuild possible.
 
-| Backend | Objects | Log / graph |
+A *log* is a shard's event stream, its genealogy (`<shard>+graph`) or the zone's control record (`__control`).
+Genealogy is owned data, not an index, so it is appended under the same fence as the shard's events; the
+adjacency index in both directions is a projection of it. The control log's compare-and-set is the lease (below),
+which is why no coordinator and no further SPI method are needed.
+
+| Backend | Objects | Log / index / graph |
 |---|---|---|
-| Local disk | sharded dirs `ab/cd/<hex>`, write-temp-then-rename | segment files + fsync, index in an embedded KV |
-| Object storage | key per object, conditional put (`If-None-Match`) | segment objects, head pointer by conditional write; index as compacted manifests |
-| Database | table `(zone, hash) -> bytes` | table `(zone, shard, seq)` with a unique constraint as the CAS; adjacency tables |
+| In process | a map, same semantics as the durable ones | a map; the single-binary dev profile and the test suite |
+| Local disk | sharded dirs `ab/cd/<hex>`, write-temp-then-rename | one framed segment per log, fsync, a batch trailer as the commit point; the index is a replayed key/value journal |
+| Object storage (S3, **Garage** in compose) | key per object, conditional put (`If-None-Match: *`, with a `HEAD` first because not every gateway honours the precondition) | — (objects only) |
+| Database (Postgres) | table `(zone, hash) -> bytes` | `(zone, log, seq)` with the primary key as the CAS; `store_index` for the projections; `store_edge` traversed by recursive CTE |
 
-Backends are chosen per zone and per space (objects on S3, log on SQL, for example).
+Backends are chosen per zone and per space: the object space is its own trait
+(`ObjectStore`), the log, index and genealogy are the rest, and a composite pairs
+them (objects on Garage/S3, log on Postgres). The dev profile pairs the local-disk or
+in-process backend with itself and needs no service at all.
 
 **Verification on read.** `get` recomputes the digest using the algorithm tag in the `HashId` and fails
 `corrupt_object` on mismatch; unverified bytes are never returned. Log segments carry the `prev` chain, verified
@@ -65,6 +78,17 @@ signature and closure completeness, copies the closure objects by hash into `out
 `bundle_published` record there last, so partial copies are unreachable. No other code path copies. Outbound is
 read-only to S1; S2 reads outbound only through `pull`. `Provenance.diff_ref` stays in `inbound` and is never
 copied by `publish`.
+
+**Shards that belong to no population.** Blob lifecycle events go to a per-zone `blobs` shard and the
+registry's `bundle_published` events to an outbound `registry` shard. Both are events, so both need a shard and a
+fence; neither belongs to a population, so neither is in the population half of the shard map.
+
+**`append` takes a draft.** `id`, `seq` and `prev` are the log's to assign — a writer cannot know them before the
+compare-and-set wins — so the interface takes the event's own fields (`actor`, `kind`, `subject`, `data`,
+`evidence`, optional advisory `ts`) and the store completes the record. A log record is the canonical encoding of
+the completed `Event` (`hash.md`, tag `event`), so the record's digest *is* the event's hash and the next event's
+`prev`; the store also `put`s that record in the object space, which is what makes an event referenced as
+`evidence` retrievable by hash.
 
 **Blobs and `no_sample`.** `put_blob` is refused with `PayloadForbidden` when the owning Trace is `no_sample`.
 The flag is stored with the owner record and can only be tightened. Blobs carry a `Retention` class (store.md);
@@ -103,6 +127,30 @@ chain and repairs from replicas.
 ## Decisions
 - **Backend CAS for leases**, not a coordinator (above): one fewer dependency, and the store already needs CAS for
   the log.
+- **`Provenance` is content-addressed under its own domain tag** (`provenance`, added to `hash.md` with this
+  component): every edge explaining a child references the same bytes, and a genealogy record can never be
+  reinterpreted as a Unit.
+- **Expiry's tombstone is `blob_expired`** (added to `events.md` with this component), written to the `blobs`
+  shard. The bytes go chunk by chunk, and only when no other live manifest references the chunk, so dedupe never
+  costs a second owner its payload.
+- **The identity, not configuration, is the zone boundary.** A store is opened as an inbound, publisher or
+  reader identity; the public API never writes `outbound` at all, and `publish` is reachable only from the
+  publisher identity. Invariant 6 is therefore structural rather than reviewed.
+- **The store is async.** The durable backends are (`tokio-postgres`, HTTP over
+  `hyper`), so the SPI and every store operation are `async`, and the futures are
+  declared `Send` so a service can spawn work that holds a store. The consequence is
+  a rule: no lock is held across an `await` anywhere in C4, and a test asserts it.
+  The alternative — a blocking store wrapping its own runtime — was rejected because
+  every caller above C4 is already async (C10, C11), and `spawn_blocking` around a
+  database call buys nothing but a thread.
+- **Graph traversal is a backend capability with a default.** `ancestors`/
+  `descendants` return `None` when a backend cannot traverse, and the store walks the
+  adjacency index a hop at a time; Postgres answers with one recursive CTE. Both
+  orders are identical — breadth-first, parents in `link` order, ties by child — so
+  the choice is a performance one and a compose test asserts the two agree.
+- **`publish` does not parse bundles.** C9 owns `bundle.md`, so it supplies a verifier that checks the signature
+  against the trust roots and reports the manifest facts the store needs. The signing dependency stays out of C4
+  and trust roots are interpreted in one place.
 - **Event schema evolution is owned by `events.md`**, and only there. A component adding a kind edits that file in
   the same change; the store stores unknown kinds verbatim and never interprets them, so an older reader is never
   broken by a newer writer.

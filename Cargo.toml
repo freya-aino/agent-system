@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/contracts", "crates/core", "crates/library", "crates/runtime"]
+members = ["crates/contracts", "crates/core", "crates/library", "crates/runtime", "crates/store"]
 
 [workspace.package]
 edition = "2024"
@@ -13,7 +13,20 @@ agent-contracts = { path = "crates/contracts" }
 agent-core = { path = "crates/core" }
 agent-library = { path = "crates/library" }
 agent-runtime = { path = "crates/runtime" }
+agent-store = { path = "crates/store" }
 
+# Durable store backends (C4): Postgres for the log, leases and graph CTEs; the S3
+# client is in-house over hyper (deps.md), with rustls for TLS.
+tokio-postgres = "0.7"
+postgres-types = "0.2"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "tokio", "http1"] }
+http-body-util = "0.1"
+bytes = "1"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+
+# The store (C4) and the services are async; tokio is the runtime everywhere.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: canonical hashing requires wire round-trips to preserve doubles
 # exactly; serde_json's default fast-path float parse is lossy.
@@ -27,6 +40,7 @@ rustls = { version = "0.23", default-features = false, features = ["std", "ring"
 rand_chacha = "0.9"
 thiserror = "2"
 proptest = "1"
+tempfile = "3"
 
 [profile.release]
 lto = "thin"
