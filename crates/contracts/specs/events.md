@@ -64,6 +64,11 @@ demoted          { deployment[ix]: HashId, trigger: string, to_state: DeployStat
 cold_start       { bundle[ix]: HashId, region: string, features: map<string, number>, count: int,
                    window: {from_seq, to_seq} }    // region id or "none"; features only, never an embedding
 
+// blobs
+blob_expired     { blob[ix]: HashId, reason: string, class: BlobClass }
+                   // tombstone: the bytes go, the BlobRef, its owner and every derived metric stay (store.md).
+                   // Written to the per-zone `blobs` shard by the holder of that shard's lease.
+
 // safety / infra
 kill_switch      { scope[ix]: RevocationScope, mode: "drain"|"stop", reason_code: string,
                    entry: int, issued_by: string }

@@ -11,7 +11,9 @@ JSON Canonicalization Scheme (RFC 8785) with three additional constraints:
 - Absent and `null` are distinct: an optional field that is absent is omitted, never encoded as `null`.
 
 A hash input is `H(domain_tag || canonical(value))` where `domain_tag` is one of
-`"primitive" | "unit" | "trace" | "event" | "manifest" | "dataset" | "metric" | "archive_spec" | "price_table"`,
+`"primitive" | "unit" | "trace" | "event" | "manifest" | "dataset" | "metric" | "archive_spec" | "price_table"`
+or `"provenance"` (the genealogy record of store.md, content-addressed so every edge explaining a child
+references the same bytes),
 so a byte sequence can never be reinterpreted as another kind of object. Manifests for signing use the same
 encoding with the `"manifest"` tag.
 

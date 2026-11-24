@@ -30,6 +30,9 @@ pub enum DomainTag {
     Metric,
     ArchiveSpec,
     PriceTable,
+    /// Genealogy, not identity: a `Provenance` record (store.md) is content-addressed
+    /// so that every edge explaining a child can reference the same bytes.
+    Provenance,
 }
 
 impl DomainTag {
@@ -44,6 +47,7 @@ impl DomainTag {
             DomainTag::Metric => "metric",
             DomainTag::ArchiveSpec => "archive_spec",
             DomainTag::PriceTable => "price_table",
+            DomainTag::Provenance => "provenance",
         }
     }
 }

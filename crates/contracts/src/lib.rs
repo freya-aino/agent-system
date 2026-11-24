@@ -7,12 +7,13 @@
 //! Spec files land here milestone by milestone. Currently implemented:
 //! `types.md`, `hash.md` (string form of `HashId`), `schema.md` (crossing types only:
 //! `Fit`), `metric.md`, `primitive.md`, `unit.md`, `trace-event.md`, `driver.md`,
-//! `worker.md`.
+//! `worker.md`, `store.md`.
 
 pub mod driver;
 pub mod metric;
 pub mod primitive;
 pub mod schema;
+pub mod store;
 pub mod trace_event;
 pub mod types;
 pub mod unit;
