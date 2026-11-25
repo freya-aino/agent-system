@@ -70,6 +70,7 @@ pub mod shards;
 pub mod sign;
 pub mod telemetry;
 pub mod tests_support;
+pub mod wiring;
 pub mod writer;
 
 pub use config::{Config, Profile};

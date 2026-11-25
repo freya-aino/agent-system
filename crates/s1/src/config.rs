@@ -390,6 +390,35 @@ impl Config {
         Ok(())
     }
 
+    /// The backends this build's binary cannot yet bind.
+    ///
+    /// The component behind each of them exists — C4 has the Postgres and S3
+    /// backends, C5/C8 have the Qdrant index — but `agent-s1`'s own start-up does
+    /// not construct them yet, and a config that asks for Postgres while the
+    /// process keeps its state in memory is exactly the "deployment that behaves in
+    /// a way nobody wrote down" that the validator exists to prevent. So the binary
+    /// refuses, naming what is missing, instead of starting and quietly being
+    /// something else.
+    pub fn unwired_backends(&self) -> Vec<&'static str> {
+        let mut unwired = vec![];
+        if self.store.backend != StoreBackend::Disk {
+            unwired.push("store.backend");
+        }
+        if self.control.backend != ControlBackend::Sqlite {
+            unwired.push("control.backend");
+        }
+        if self.queue.backend != QueueBackend::InDb {
+            unwired.push("queue.backend");
+        }
+        if self.vector.backend != VectorBackend::InProcess {
+            unwired.push("vector.backend");
+        }
+        if self.auth.mode != AuthMode::StaticTokens {
+            unwired.push("auth.mode");
+        }
+        unwired
+    }
+
     /// Whether the dev profile's promise holds: nothing external is required.
     pub fn needs_external_services(&self) -> bool {
         self.store.backend != StoreBackend::Disk
@@ -448,6 +477,34 @@ pub(crate) mod tests {
         assert!(
             !config.needs_external_services(),
             "CI and a developer must run the full flow with nothing running beside it"
+        );
+    }
+
+    #[test]
+    fn a_backend_the_binary_cannot_bind_is_named_rather_than_ignored() {
+        let config = dev();
+        assert!(
+            config.unwired_backends().is_empty(),
+            "the dev profile is exactly what this build binds"
+        );
+
+        let mut asking = dev();
+        asking.store.backend = StoreBackend::S3;
+        asking.store.endpoint = Some("http://garage:3900".into());
+        asking.control.backend = ControlBackend::Postgres;
+        asking.control.dsn = "postgres://db:5432/agent".into();
+        asking.vector.backend = VectorBackend::Qdrant;
+        asking.vector.endpoint = Some("http://qdrant:6333".into());
+        // The config is *valid*: these are real backends and the keys are right.
+        asking.validate().unwrap();
+        // It is simply not what this binary can bind, and it says which parts.
+        let unwired = asking.unwired_backends();
+        assert!(unwired.contains(&"store.backend"));
+        assert!(unwired.contains(&"control.backend"));
+        assert!(unwired.contains(&"vector.backend"));
+        assert!(
+            !unwired.contains(&"queue.backend"),
+            "the in-DB queue is the one this build has"
         );
     }
 

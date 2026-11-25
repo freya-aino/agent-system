@@ -57,6 +57,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(2);
         }
     };
+    // A config this build cannot honour is a refusal, not a warning: starting with
+    // Postgres in the file and the state in memory is the failure mode the
+    // validator exists to prevent.
+    let unwired = config.unwired_backends();
+    if !unwired.is_empty() {
+        eprintln!(
+            "s1: this build cannot bind {}: the backend exists in its component \
+             (C4, C5/C8) but agent-s1's start-up does not construct it yet",
+            unwired.join(", ")
+        );
+        eprintln!("s1: refusing to start rather than keeping that state in memory");
+        std::process::exit(2);
+    }
     eprintln!(
         "s1: node {} on {} ({:?} profile, external services: {})",
         config.node,

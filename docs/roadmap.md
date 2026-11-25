@@ -25,11 +25,41 @@ crates/
   s2/             C11 binary: bundle pull, router serving, adapters (MCP, A2A), driver host
   seeds/          the seed set (several dedicated Agents) + importer
 web/              Svelte + Vite dashboard (S1 only)
-docker-compose.yml  the stack (S1, S2, Garage, Postgres, Qdrant, fake provider); at the root so it needs no -f
+docker-compose.yml  the stack (S1, S2, Garage, Postgres, Qdrant); at the root so it needs no -f
+Dockerfile          one image, two entrypoints: S1 and S2 share the workspace
+deploy/compose/     the stack's own s1.toml and s2.toml, validated by a test
 garage.toml         the compose Garage's configuration, mounted into the container
 garage-init.sh      one-shot layout, bucket and development access key for that Garage
 store-schema.sql    the store's DDL, embedded by the Postgres backend and applicable with psql
 ```
+
+## State
+
+Every milestone through **M8** is implemented and green. What is *not* done is
+recorded here rather than in a commit message nobody will find again:
+
+- **The SPA is unbuilt in CI.** `web/` holds the Svelte sources and pinned
+  versions; `npm install && npm run build` runs in the devenv. S1 serves a page
+  saying so until `web/dist` exists, and the Rust side has no dependency on it.
+- **`/lineages/{root}` and `/units/{hash}` are not served.** They are reads of the
+  store's genealogy, and S1's handler says so rather than serving a projection
+  that would be a different claim than the log's.
+- **`POST /promotions/{id}:approve` needs the gate policy and the Optimizer's
+  standing from the log**, which the writer loop does not yet load; the workflow
+  itself (`s1::promotions`) is complete and tested against C9.
+- **The Firecracker driver's live path is `#[ignore]`d**, needing `/dev/kvm`, a
+  `firecracker` binary and a built guest rootfs. Everything that can be checked
+  without them is checked.
+- **S1's binary binds only the in-process backends.** The components behind the
+  seams exist (C4's Postgres and S3 backends, the Qdrant `VectorIndex`), but
+  `agent-s1`'s start-up does not construct them, so it **refuses to start** on a
+  config that asks for one rather than keeping that state in memory and looking
+  durable. The compose stack therefore runs disk + SQLite + the in-process queue
+  and index; Postgres, Garage and Qdrant are up for the store's own `--ignored`
+  tests.
+- **The RL meta-optimizer and the LLM proposer are off by default** and are
+  measured against the bandit and the programmatic operators respectively before
+  either is adopted. That is the design, not an omission.
 
 ## Milestones
 

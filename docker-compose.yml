@@ -1,7 +1,12 @@
-# The compose stack (docs/stack.md). What is here is what exists: Postgres for the
-# event log, leases and the graph CTEs; Garage for objects and blobs; Qdrant for the
-# vector index that C5/C8 will fill. The S1 and S2 services and the fake provider
-# join this file with their own milestones (M4 onwards).
+# The compose stack (docs/stack.md): Postgres for the event log, leases and the
+# graph CTEs; Garage for objects and blobs; Qdrant for the vector index (C5
+# descriptors, C8 task-class regions); and the two services.
+#
+# S1 and S2 are **one image, two entrypoints** (see Dockerfile): they share the
+# workspace, and the only difference at run time is which binary starts and what
+# config it reads. S2 reaches S1 on exactly one endpoint (`POST /telemetry`) and
+# pulls everything else from a registry directory — there is no compose link in the
+# other direction, because there is no inbound control path into a deployment.
 #
 # Host ports are offset by 50000 (Postgres 55432, Garage 59000, Qdrant 56333) so the
 # stack coexists with whatever else is running on a development machine.
@@ -49,8 +54,7 @@ services:
       timeout: 3s
       retries: 30
 
-  # The VectorIndex backend (C5 descriptors, C8 task-class regions). Present so the
-  # stack is one file; nothing writes to it before M5.
+  # The VectorIndex backend (C5 descriptors, C8 task-class regions).
   qdrant:
     image: qdrant/qdrant:latest
     ports:
@@ -58,7 +62,65 @@ services:
     volumes:
       - qdrant-data:/qdrant/storage
 
+  # S1: the API, the shard writer and the management UI. The default profile for an
+  # arbitrary location is this one — Postgres plus Qdrant — and it is what the
+  # compose stack runs, so what CI exercises here is what a deployment runs.
+  s1:
+    build:
+      context: .
+    command: ["agent-s1", "--config", "/srv/config/s1.toml"]
+    environment:
+      # Only tightening overrides belong here; the file is the source of truth.
+      AGENT_S1_NODE: s1-compose
+      AGENT_S1_BIND: 0.0.0.0:8080
+      AGENT_S1_WEB_ROOT: /srv/web
+      # libpq reads these; the DSN in the config file carries no credentials,
+      # because a config file that holds a password is a config file nobody can
+      # commit.
+      PGUSER: agent
+      PGPASSWORD: agent
+    ports:
+      - "58080:8080"
+    volumes:
+      - ./deploy/compose:/srv/config:ro
+      # The built SPA, if the devenv has built it. Absent is fine: S1 serves a
+      # page saying how to build it rather than a blank 404.
+      - ./web/dist:/srv/web:ro
+      - registry:/srv/registry
+    depends_on:
+      postgres:
+        condition: service_healthy
+      garage:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "agent-s1 --help >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # S2: headless, pull-only. It shares the registry directory read-only — a bundle
+  # or a policy arrives as a file it fetches, never as a push.
+  s2:
+    build:
+      context: .
+    command: ["agent-s2", "/srv/config/s2.toml"]
+    environment:
+      AGENT_S2_INSTANCE: s2-compose
+      AGENT_S2_LISTEN: 0.0.0.0:8081
+      # The registry it polls: bundles, the signed policy and the revocation feed
+      # arrive as files S1 writes there and S2 fetches.
+      AGENT_S2_REGISTRY: /srv/registry
+    ports:
+      - "58081:8081"
+    volumes:
+      - ./deploy/compose:/srv/config:ro
+      - registry:/srv/registry:ro
+    depends_on:
+      s1:
+        condition: service_started
+
 volumes:
+  registry:
   postgres-data:
   garage-meta:
   garage-data:

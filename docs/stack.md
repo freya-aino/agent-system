@@ -76,3 +76,15 @@ must run the full flow with no external services.
 Firecracker needs `/dev/kvm`. In compose, S2's VM-hosting service is the only privileged container (device
 passthrough for `/dev/kvm`, jailer, cgroups); everything else is unprivileged. In production, S2 hosts run
 directly on KVM-capable Linux, and S1 and S2 scale independently.
+
+**One image, two entrypoints** (`Dockerfile`). The services share the whole workspace, so two images would be
+two copies of the same build for the sake of two different binaries; the base image tag matches
+`rust-toolchain.toml`, because an image built on another compiler is another artifact. The compose stack's own
+configuration lives in `deploy/compose/` and is parsed by a test, so a file that would refuse to start is caught
+in CI rather than when the stack comes up. The compose S2 runs the **process** driver and says so: there is no
+KVM in a CI container, and a config claiming `microvm` there would be the one lie the whole isolation story
+cannot afford.
+
+S2 reaches S1 on exactly one endpoint (`POST /telemetry`) and pulls everything else — bundles, the signed
+policy, the revocation feed — from a registry directory the two share, read-only on S2's side. There is no
+compose link in the other direction, because there is no inbound control path into a deployment.

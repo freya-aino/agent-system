@@ -1,0 +1,48 @@
+# S1 in the compose stack: the default profile for an arbitrary location.
+#
+# Postgres holds the event log, the shard leases, the job queue and the control DB;
+# objects and blobs go to Garage over the S3 API; the vector index is Qdrant. That
+# is one database, one object store and one index — and the single-binary dev
+# profile (`agent-s1 --dev <dir>`) still runs the same flow with none of them.
+# `dev` rather than `prod`, and deliberately: the prod profile requires OIDC and
+# `microvm`, and a CI container has neither an identity provider nor /dev/kvm. The
+# *backends* are the production ones, so what this stack exercises is the real data
+# path; what it does not exercise is the two things a container cannot provide, and
+# the validator refuses to let this file pretend otherwise.
+profile = "dev"
+node = "s1-compose"
+bind = "0.0.0.0:8080"
+
+# Disk, sqlite, the in-process queue and exact vector search: **what this build's
+# binary actually binds**. The Postgres, Garage and Qdrant services in the stack are
+# up for the store's own `--ignored` tests (C4), and the day `agent-s1` constructs
+# those backends this file changes to use them — until then it would be a config
+# asking for a database while the process kept its state in memory, which the binary
+# now refuses rather than doing quietly.
+[store]
+backend = "disk"
+root = "/srv/registry/objects"
+
+[control]
+backend = "sqlite"
+dsn = "/srv/registry/control.db"
+
+[queue]
+backend = "in_db"
+
+[vector]
+backend = "in_process"
+
+[driver]
+# The compose stack has no KVM, so the process driver is honest here. A production
+# deployment sets `profile = "prod"` and `isolation = "microvm"`, and the validator
+# refuses the combination below in that profile.
+isolation = "process"
+
+[auth]
+mode = "static_tokens"
+
+# The one S2 instance allowed to push telemetry, by key id. An empty table means no
+# instance may push, which is the right default.
+[auth.instance_keys]
+s2-compose = "compose-instance-secret"

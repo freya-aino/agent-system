@@ -177,6 +177,7 @@ dependencies = [
  "agent-promotion",
  "agent-router",
  "agent-runtime",
+ "agent-s2",
  "agent-store",
  "agent-testkit",
  "bytes",

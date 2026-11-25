@@ -116,5 +116,11 @@ C0's encoder and C1's builders: its on-disk format is canonical JSON and its
 importer is `std::fs`. The management UI's npm packages do not count against the
 30-crate cap (`docs/stack.md`) and are listed in `web/DEPS.md`.
 
+**Activated by the compose stack and the image (2026-11-25), none new.** The
+`Dockerfile` is one multi-stage build for both services, pinned to the same
+toolchain as `rust-toolchain.toml`, and the compose services are the two binaries
+with a shared registry volume. No build tool, no entrypoint script, no process
+supervisor: a container that runs one binary needs none of them.
+
 Headroom: 6. Likely first additions if needed: a compression crate for blobs, and a regex crate if the
 hand-written anchored matcher in the guard DSL and `Subsumes` proves insufficient.

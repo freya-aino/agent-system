@@ -4,6 +4,33 @@ A continuously evolving agent framework. Agents are hashable data; lineages of t
 promoted by **Service 1 (Evolution)**, and served by **Service 2 (Deployment)** as locked, isolated, headless
 agents.
 
+## Running it
+
+The implementation is in this repository, milestone by milestone through M8
+(`docs/roadmap.md` records what is done and what is not).
+
+```sh
+cargo test --workspace            # the whole suite; needs nothing external
+cargo run -p agent-s1 -- --dev /tmp/s1
+#   the API, the writer loop and the management UI on 127.0.0.1:8080
+#   dev tokens for each role are printed at start-up
+```
+
+The **single-binary dev profile** is the floor: SQLite, an in-process queue and
+lease backend, the process driver, local disk and in-process exact vector search.
+It runs the full flow with **no external services**, so neither a developer nor CI
+ever needs Postgres or Qdrant.
+
+The **default profile for an arbitrary location** is Postgres plus Qdrant, which is
+what `docker compose up -d` runs (`Dockerfile`, `deploy/compose/`). The management
+UI is built separately in the devenv (`web/README.md`); S1 serves a page saying so
+until it is.
+
+```sh
+cargo run -p agent-seeds -- verify seeds   # the shipped seed set, hash by hash
+cargo test -p agent-driver-fc -- --ignored # the Firecracker driver, on a KVM host
+```
+
 ## Rules for this spec set
 1. **Contracts are the only shared surface.** Every component spec depends on `crates/contracts/specs/` and on
    `core` (C0), and on nothing else. A component spec must be readable alone with the contracts.

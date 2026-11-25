@@ -1,0 +1,33 @@
+# S2 in the compose stack: headless, select-only, pull-only.
+#
+# Its inputs are this file, the environment, and the registry directory it polls.
+# The only thing it sends anywhere is a signed telemetry envelope to S1.
+profile = "dev"
+instance = "s2-compose"
+streaming = false
+
+[isolation]
+# The compose stack has no KVM. The prod profile would refuse this without an
+# explicit `allow_weaker_isolation`, which is the point of the flag.
+level = "process"
+
+[telemetry]
+sink = "http://s1:8080/telemetry"
+key_id = "s2-compose"
+
+[limits]
+max_instances_per_bundle = 2
+queue_depth = 32
+queue_deadline_ms = 5000
+max_cost_per_run = 0.5
+max_wall_ms_per_run = 30000
+
+# The signing key the registry's artifacts are verified against. The dev profile's
+# "public key" is the shared secret, which `promotion::sign` labels as the dev
+# profile rather than presenting as a signature.
+[[trust_roots]]
+key_id = "policy-s1-compose"
+public_key = "cG9saWN5LXMxLWNvbXBvc2U="
+valid_from = 0
+valid_to = 4000000000000
+role = "signing"

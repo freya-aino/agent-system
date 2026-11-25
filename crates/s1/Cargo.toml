@@ -31,6 +31,10 @@ bytes.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "sync", "time"] }
 
 [dev-dependencies]
+# The end-to-end test drives a real S2 live window into S1's sink, which is the
+# one hand-off no unit test can stand in for.
+agent-s2.workspace = true
+agent-metrics.workspace = true
 agent-testkit.workspace = true
 proptest.workspace = true
 
