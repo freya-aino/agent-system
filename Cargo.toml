@@ -15,6 +15,7 @@ members = [
     "crates/obs",
     "crates/promotion",
     "crates/router",
+    "crates/s1",
     "crates/s2",
     "crates/testkit",
 ]
@@ -40,6 +41,7 @@ agent-swarm = { path = "crates/swarm" }
 agent-testkit = { path = "crates/testkit" }
 agent-router = { path = "crates/router" }
 agent-runtime = { path = "crates/runtime" }
+agent-s1 = { path = "crates/s1" }
 agent-s2 = { path = "crates/s2" }
 agent-store = { path = "crates/store" }
 

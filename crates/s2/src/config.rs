@@ -41,6 +41,7 @@ pub enum Profile {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub profile: Profile,
@@ -81,6 +82,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IsolationConfig {
     pub level: IsolationLevel,
     /// Required, explicit and logged for anything weaker than the profile demands.
@@ -95,6 +97,7 @@ pub struct IsolationConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TelemetryConfig {
     /// Where envelopes are pushed. Write-only from S2's view.
     pub sink: String,
@@ -111,6 +114,7 @@ pub struct TelemetryConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HostLimits {
     pub max_instances_per_bundle: u32,
     /// A bounded queue with a deadline; never an unbounded one.
@@ -144,9 +148,9 @@ fn default_window() -> u64 {
 }
 
 impl Config {
-    /// Parse TOML. An unknown key is an error: serde's `deny_unknown_fields` is not
-    /// used on the struct because the nested shapes are contract types, so the
-    /// check is explicit here and names the key.
+    /// Parse TOML. An unknown key is an error and the message names it: every
+    /// struct here carries `deny_unknown_fields`, so a typo in a config file
+    /// cannot silently mean "the default".
     pub fn from_toml(text: &str) -> Result<Config, S2Error> {
         let config: Config =
             toml::from_str(text).map_err(|e| S2Error::invalid("config", format!("{e}")))?;
@@ -531,5 +535,10 @@ pub(crate) mod tests {
         // And so does a malformed one.
         let malformed = text.replace("level = \"microvm\"", "level = \"vm\"");
         assert!(Config::from_toml(&malformed).is_err());
+        // An unknown *key* fails too, and the message names it: a typo must not
+        // silently mean "the default" (docs/stack.md).
+        let typo = text.replace("streaming = false", "streamingg = false");
+        let err = Config::from_toml(&typo).expect_err("an unknown key fails the start");
+        assert!(format!("{err}").contains("streamingg"), "{err}");
     }
 }
