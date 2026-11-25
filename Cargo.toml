@@ -17,6 +17,7 @@ members = [
     "crates/router",
     "crates/s1",
     "crates/s2",
+    "crates/seeds",
     "crates/testkit",
 ]
 
@@ -43,6 +44,7 @@ agent-router = { path = "crates/router" }
 agent-runtime = { path = "crates/runtime" }
 agent-s1 = { path = "crates/s1" }
 agent-s2 = { path = "crates/s2" }
+agent-seeds = { path = "crates/seeds" }
 agent-store = { path = "crates/store" }
 
 # Durable store backends (C4): Postgres for the log, leases and graph CTEs; the S3

@@ -106,5 +106,15 @@ guest cid and the image ids through C0's encoder; the jailer and the VMM are
 `std::process::Command`, and the egress proxy's decisions are pure. No async
 runtime: a VM boot is a handful of blocking calls, like the rest of C2.
 
+**Activated by C10 and the seed set (2026-11-25), none new.** S1's HTTP surface is
+the same `hyper` arrangement S2's front already uses (`hyper-util`,
+`http-body-util`, `bytes`, `tokio`), with `toml` for the config and `sha2` for the
+token digests and the dev-profile MAC; the route table, the OpenAPI document and
+the static asset server are hand-written, because the API is thirty routes and a
+web framework would be a dependency for a match statement. The seed set needs only
+C0's encoder and C1's builders: its on-disk format is canonical JSON and its
+importer is `std::fs`. The management UI's npm packages do not count against the
+30-crate cap (`docs/stack.md`) and are listed in `web/DEPS.md`.
+
 Headroom: 6. Likely first additions if needed: a compression crate for blobs, and a regex crate if the
 hand-written anchored matcher in the guard DSL and `Subsumes` proves insufficient.

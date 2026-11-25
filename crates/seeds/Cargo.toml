@@ -1,0 +1,23 @@
+[package]
+name = "agent-seeds"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The seed set: several dedicated Agents, the on-disk format, and the idempotent importer that puts them in the store."
+
+[dependencies]
+agent-contracts.workspace = true
+agent-core.workspace = true
+agent-library.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[[bin]]
+name = "agent-seeds"
+path = "src/bin/seeds.rs"
+
+[dev-dependencies]
+proptest.workspace = true
