@@ -465,16 +465,18 @@ pub fn builder_version() -> Version {
     BUILDER_VERSION.to_owned()
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
+/// Fixtures the milestone and cross-crate tests share: a resolvable world, a set of
+/// passing gate results and an approval. Behind a public module rather than
+/// `#[cfg(test)]`, because an integration test — and S2's own tests — are separate
+/// crates and cannot see a unit-test module.
+pub mod tests_support {
     use agent_contracts::events::{Decision, GateVerdict};
     use agent_library::registry::InMemoryRegistry;
 
     use super::*;
-    use crate::gates::tests::world;
-    use crate::policy::tests::function;
+    use crate::policy::tests_support::function;
 
-    pub(crate) struct Built {
+    pub struct Built {
         pub registry: InMemoryRegistry,
         pub root: Unit,
         pub router: Unit,
@@ -483,7 +485,7 @@ pub(crate) mod tests {
     }
 
     /// A resolvable world: a schema, a Node, an Agent over it, and a router.
-    pub(crate) fn built() -> Built {
+    pub fn built() -> Built {
         let mut registry = InMemoryRegistry::default();
         let document = serde_json::json!({ "type": "string" });
         let schema = agent_library::primitive::schema_ref_of(&document).unwrap();
@@ -491,7 +493,7 @@ pub(crate) mod tests {
             .put(agent_library::primitive::schema_primitive("s", "1.0.0", document).unwrap())
             .unwrap();
 
-        let mut node = crate::policy::tests::unit(Role::None, vec![]);
+        let mut node = crate::policy::tests_support::unit(Role::None, vec![]);
         node.level = 1;
         node.kind = "node/transform".into();
         node.hash = None;
@@ -507,7 +509,7 @@ pub(crate) mod tests {
         };
         let node_hash = registry.put_unit(node).expect("a valid Node");
 
-        let mut root = crate::policy::tests::unit(Role::None, vec![function("answer", 1, 2)]);
+        let mut root = crate::policy::tests_support::unit(Role::None, vec![function("answer", 1, 2)]);
         root.hash = None;
         root.members = BTreeMap::from([(
             "s0".to_owned(),
@@ -521,7 +523,7 @@ pub(crate) mod tests {
         let root_hash = registry.put_unit(root.clone()).expect("a valid Agent");
         root.hash = Some(root_hash);
 
-        let mut router = crate::policy::tests::unit(Role::Router, vec![]);
+        let mut router = crate::policy::tests_support::unit(Role::Router, vec![]);
         router.hash = None;
         let router_hash = registry.put_unit(router.clone()).expect("a valid router");
         router.hash = Some(router_hash);
@@ -535,7 +537,7 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn passing_results(policy: &GatePolicy, class: ChangeClass) -> Vec<GateResult> {
+    pub fn passing_results(policy: &GatePolicy, class: ChangeClass) -> Vec<GateResult> {
         policy
             .gates_for(class)
             .iter()
@@ -553,7 +555,7 @@ pub(crate) mod tests {
             .collect()
     }
 
-    pub(crate) fn approvals(policy: &GatePolicy, class: ChangeClass) -> Vec<Decided> {
+    pub fn approvals(policy: &GatePolicy, class: ChangeClass) -> Vec<Decided> {
         vec![Decided {
             proposal: HashId::from_sha256([0x50; 32]),
             actor: "human:ada".into(),
@@ -565,7 +567,7 @@ pub(crate) mod tests {
         }]
     }
 
-    pub(crate) fn request<'a>(
+    pub fn request<'a>(
         b: &'a Built,
         policy: &GatePolicy,
         class: ChangeClass,
@@ -599,6 +601,15 @@ pub(crate) mod tests {
             extra_evidence: vec![],
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use agent_contracts::events::GateVerdict;
+
+    use super::tests_support::*;
+    use super::*;
+    use crate::gates::tests::world;
 
     #[test]
     fn the_same_request_builds_byte_identical_manifests() {
@@ -657,7 +668,7 @@ pub(crate) mod tests {
     fn a_judge_in_the_closure_stops_the_build() {
         let w = world();
         let mut b = built();
-        let mut judge = crate::policy::tests::unit(Role::Judge, vec![]);
+        let mut judge = crate::policy::tests_support::unit(Role::Judge, vec![]);
         judge.level = 1;
         judge.kind = "node/transform".into();
         judge.hash = None;

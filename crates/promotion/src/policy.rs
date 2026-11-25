@@ -418,15 +418,15 @@ pub fn policy_ref(policy: &GatePolicy) -> Result<HashId, PromotionError> {
     .map_err(|d| PromotionError::invalid("GatePolicy", d.message))
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
+/// Fixtures the cross-crate tests share: a function descriptor and a Unit.
+pub mod tests_support {
     use agent_contracts::unit::{
         Completion, FunctionDescriptor, FunctionScope, Interface, Limits, MemoryPolicy,
     };
 
     use super::*;
 
-    pub(crate) fn function(name: &str, input: u8, output: u8) -> FunctionDescriptor {
+    pub fn function(name: &str, input: u8, output: u8) -> FunctionDescriptor {
         FunctionDescriptor {
             name: name.to_owned(),
             description: String::new(),
@@ -439,7 +439,7 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn unit(role: Role, functions: Vec<FunctionDescriptor>) -> Unit {
+    pub fn unit(role: Role, functions: Vec<FunctionDescriptor>) -> Unit {
         Unit {
             level: 2,
             kind: "agent".into(),
@@ -462,6 +462,12 @@ pub(crate) mod tests {
             hash: Some(HashId::from_sha256([1; 32])),
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tests_support::*;
+    use super::*;
 
     #[test]
     fn the_class_is_derived_from_the_change_and_not_declared() {

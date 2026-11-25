@@ -84,5 +84,16 @@ the shared integration fixture (a real Swarm over the fake provider, the suites 
 the loop); it pulls no external crate of its own and is never compiled into a
 binary.
 
+**Activated by C8, C9, C11 and C12 (2026-11-25), one allocated crate turned on.**
+`toml` (#21) is now used, by S2's configuration loader — the format `docs/stack.md`
+fixed, with environment overrides that can only tighten. C9 and C12 are pure like
+C3 and C5; the dev signing service and the instance key are HMAC over `sha2`, which
+is the same arrangement the S3 client already uses and is labelled as the dev
+profile rather than presented as a signature. S2's HTTP front turns on `hyper`'s
+`server` feature beside the `client` one the provider and S3 clients already use,
+with `hyper-util`, `http-body-util`, `bytes` and `tokio` — no new entry in the
+table, and still no web framework: the front is four routes per protocol and a
+health route.
+
 Headroom: 6. Likely first additions if needed: a compression crate for blobs, and a regex crate if the
 hand-written anchored matcher in the guard DSL and `Subsumes` proves insufficient.

@@ -286,17 +286,17 @@ mod tests {
     use agent_contracts::unit::{ConnectorBinding, ConnectorKind};
 
     use super::*;
-    use crate::build::tests::{approvals, built, passing_results, request};
+    use crate::build::tests_support::{approvals, built, passing_results, request};
     use crate::gates::tests::world;
     use crate::policy::{ChangeClass, GatePolicy};
-    use crate::sign::tests::log;
+    use crate::sign::tests_support::log;
     use crate::sign::{DevSigner, DevVerifier, SigningRequest, SigningService};
 
     struct Fixture {
         bundle: Bundle,
         roots: Vec<TrustRoot>,
         connectors: BTreeSet<Name>,
-        built: crate::build::tests::Built,
+        built: crate::build::tests_support::Built,
     }
 
     fn fixture(class: ChangeClass) -> Fixture {
@@ -321,7 +321,7 @@ mod tests {
         let signature = signer
             .sign(&SigningRequest {
                 manifest_canonical_bytes: crate::build::manifest_bytes(&manifest).unwrap(),
-                proposal_id: crate::sign::tests::proposal(),
+                proposal_id: crate::sign::tests_support::proposal(),
                 policy_hash: policy.id.clone(),
             })
             .expect("the signing service signs");
@@ -415,7 +415,7 @@ mod tests {
                 .sign(&SigningRequest {
                     manifest_canonical_bytes: crate::build::manifest_bytes(&f.bundle.manifest)
                         .unwrap(),
-                    proposal_id: crate::sign::tests::proposal(),
+                    proposal_id: crate::sign::tests_support::proposal(),
                     policy_hash: policy.id.clone(),
                 })
                 .unwrap();
@@ -523,7 +523,7 @@ mod tests {
         f.bundle.signature = signer
             .sign(&SigningRequest {
                 manifest_canonical_bytes: crate::build::manifest_bytes(&f.bundle.manifest).unwrap(),
-                proposal_id: crate::sign::tests::proposal(),
+                proposal_id: crate::sign::tests_support::proposal(),
                 policy_hash: policy.id.clone(),
             })
             .unwrap();

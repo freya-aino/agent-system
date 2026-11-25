@@ -686,7 +686,7 @@ pub(crate) mod tests {
     use agent_metrics::def;
 
     use super::*;
-    use crate::policy::tests::{function, unit};
+    use crate::policy::tests_support::{function, unit};
 
     pub(crate) struct World {
         pub suite: MetricSuite,

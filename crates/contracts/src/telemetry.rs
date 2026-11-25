@@ -246,6 +246,10 @@ pub const ENVELOPE_FIELDS: &[&str] = &[
 pub const FORBIDDEN_FIELDS: &[&str] = &[
     "embedding",
     "payload_ref",
+    // A `Distribution` in an envelope never carries one: the samples were never
+    // stored, so a reference to them is a reference to nothing — or to something
+    // somebody kept.
+    "samples_ref",
     "prompt",
     "output",
     "input",

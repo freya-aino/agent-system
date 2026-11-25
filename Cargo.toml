@@ -11,8 +11,10 @@ members = [
     "crates/meta-optimizer",
     "crates/swarm",
     "crates/optimizer",
+    "crates/obs",
     "crates/promotion",
     "crates/router",
+    "crates/s2",
     "crates/testkit",
 ]
 
@@ -30,18 +32,20 @@ agent-library = { path = "crates/library" }
 agent-meta-optimizer = { path = "crates/meta-optimizer" }
 agent-metrics = { path = "crates/metrics" }
 agent-promotion = { path = "crates/promotion" }
+agent-obs = { path = "crates/obs" }
 agent-optimizer = { path = "crates/optimizer" }
 agent-swarm = { path = "crates/swarm" }
 agent-testkit = { path = "crates/testkit" }
 agent-router = { path = "crates/router" }
 agent-runtime = { path = "crates/runtime" }
+agent-s2 = { path = "crates/s2" }
 agent-store = { path = "crates/store" }
 
 # Durable store backends (C4): Postgres for the log, leases and graph CTEs; the S3
 # client is in-house over hyper (deps.md), with rustls for TLS.
 tokio-postgres = "0.7"
 postgres-types = "0.2"
-hyper = { version = "1", features = ["client", "http1"] }
+hyper = { version = "1", features = ["client", "server", "http1"] }
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "tokio", "http1"] }
 http-body-util = "0.1"
 bytes = "1"
@@ -61,6 +65,9 @@ unicode-normalization = "0.1"
 rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }
 rand_chacha = "0.9"
 thiserror = "2"
+# Configuration files (docs/stack.md: TOML plus environment overrides, validated at
+# startup). Allocated in deps.md as #21.
+toml = "0.9"
 proptest = "1"
 tempfile = "3"
 

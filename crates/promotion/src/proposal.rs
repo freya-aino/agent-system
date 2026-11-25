@@ -208,9 +208,9 @@ mod tests {
     use agent_contracts::events::GateVerdict;
 
     use super::*;
-    use crate::build::tests::{approvals as approval_events, passing_results};
+    use crate::build::tests_support::{approvals as approval_events, passing_results};
     use crate::gates::tests::world;
-    use crate::policy::tests::{function, unit};
+    use crate::policy::tests_support::{function, unit};
 
     fn population() -> Population {
         Population {

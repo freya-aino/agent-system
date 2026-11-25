@@ -296,15 +296,18 @@ pub fn unbase64(input: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
-    use agent_contracts::events::{Decision, GateVerdict};
+/// Fixtures the cross-crate tests share: an event source that answers from what the
+/// test put in it. Public for the same reason as `build::tests_support`.
+pub mod tests_support {
+    use agent_contracts::events::{Decided, Decision, GateResult, GateVerdict};
+    use agent_contracts::types::HashId;
 
-    use super::*;
-    use crate::policy::Gate;
+    use super::{EventSource, Provenance, SigningRequest};
+    use crate::approval::OptimizerStanding;
+    use crate::policy::{ChangeClass, Gate, GatePolicy};
 
     /// An event source that answers from what the test put in it.
-    pub(crate) struct Log {
+    pub struct Log {
         pub class: ChangeClass,
         pub results: Vec<GateResult>,
         pub decisions: Vec<Decided>,
@@ -330,7 +333,7 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn log(policy: &GatePolicy, class: ChangeClass) -> Log {
+    pub fn log(policy: &GatePolicy, class: ChangeClass) -> Log {
         Log {
             class,
             results: policy
@@ -352,7 +355,7 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn result(policy: &GatePolicy, gate: Gate, verdict: GateVerdict) -> GateResult {
+    pub fn result(policy: &GatePolicy, gate: Gate, verdict: GateVerdict) -> GateResult {
         GateResult {
             proposal: proposal(),
             gate: gate.as_str().to_owned(),
@@ -366,17 +369,25 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn proposal() -> HashId {
+    pub fn proposal() -> HashId {
         HashId::from_sha256([0x50; 32])
     }
 
-    fn request(policy: &GatePolicy) -> SigningRequest {
+    pub fn request(policy: &GatePolicy) -> SigningRequest {
         SigningRequest {
             manifest_canonical_bytes: b"{\"root\":\"sha256:ab\"}".to_vec(),
             proposal_id: proposal(),
             policy_hash: policy.id.clone(),
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use agent_contracts::events::GateVerdict;
+
+    use super::tests_support::*;
+    use super::*;
 
     #[test]
     fn a_signature_covers_the_bytes_and_verifies_against_the_registered_key() {
