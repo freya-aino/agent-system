@@ -37,6 +37,13 @@ use tokio::sync::Mutex;
 /// the outbox.
 const TICK_MS: u64 = 5_000;
 
+/// The single-binary profile's one shard. A real deployment has one per population
+/// and the coordinator assigns them.
+const DEV_SHARD: &str = "pop-1:0";
+
+/// How often the SSE stream looks for new events.
+const STREAM_POLL_MS: u64 = 500;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
@@ -114,20 +121,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if !reclaimed.is_empty() {
                 eprintln!("s1: reclaimed {} expired job leases", reclaimed.len());
             }
-            // The outbox is where handlers leave events for the writer. In the dev
-            // profile it is drained and logged; a real deployment appends under the
-            // shard's fence.
-            for draft in service.take_outbox() {
-                let held = coordinator
-                    .held()
-                    .first()
-                    .map(|grant| grant.shard.clone())
-                    .unwrap_or_else(|| "pop-1:0".to_owned());
-                let may_write = coordinator.may_run(&held, WriterLoop::Selection, now);
-                eprintln!(
-                    "s1: event {} (shard {held}, writer: {may_write})",
-                    draft.kind
-                );
+            // The outbox is where handlers leave events for the writer. The
+            // writer appends under the shard's fence and only then records the
+            // event in the dashboard window: a feed that showed intentions would
+            // let an operator act on a write that was then fenced out.
+            let shard = coordinator
+                .held()
+                .first()
+                .map(|grant| grant.shard.clone())
+                .unwrap_or_else(|| DEV_SHARD.to_owned());
+            if coordinator.acquire(&shard, now).is_ok() {
+                let mut seq = service.feed.cursor();
+                let actor =
+                    agent_contracts::trace_event::Actor::System(coordinator.node().to_owned());
+                for draft in service.take_outbox() {
+                    if !coordinator.may_run(&shard, WriterLoop::Selection, now) {
+                        eprintln!("s1: fenced out of {shard}; dropping the outbox unwritten");
+                        break;
+                    }
+                    seq += 1;
+                    service.appended(&shard, seq, &draft, &actor, now);
+                    eprintln!("s1: appended {} to {shard}#{seq}", draft.kind);
+                }
             }
         }
     });
@@ -198,6 +213,12 @@ async fn serve(
         };
     }
 
+    // The event stream owns its connection, so it is served here rather than by a
+    // handler: a handler returning a body cannot hold one open.
+    if route == Route::SubscribeEvents {
+        return stream_events(service, request_cursor(&path)).await;
+    }
+
     let parsed = if body.is_empty() {
         serde_json::Value::Object(serde_json::Map::new())
     } else {
@@ -220,6 +241,63 @@ async fn serve(
         StatusCode::from_u16(response.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
         &response.body,
     )
+}
+
+/// Where a client wants to resume from: the `since` parameter, or the
+/// `Last-Event-ID` header the browser sends on a reconnect.
+fn request_cursor(path: &str) -> u64 {
+    path.split_once('?')
+        .map(|(_, query)| query)
+        .unwrap_or("")
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(key, _)| *key == "since")
+        .and_then(|(_, value)| value.parse().ok())
+        .unwrap_or(0)
+}
+
+/// One SSE response.
+///
+/// Bounded in time rather than open forever: the browser's `EventSource`
+/// reconnects on its own with `Last-Event-ID`, and a stream that never ended would
+/// hold a connection through a deploy. A client that falls behind the ring gets a
+/// `lagged` event rather than a silent gap.
+async fn stream_events(service: Arc<Mutex<Service>>, since: u64) -> Response<Full<Bytes>> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut cursor = since;
+    let mut body = String::new();
+    loop {
+        {
+            let guard = service.lock().await;
+            let page = guard.feed.query(cursor, &default_filter(), 200);
+            if page.lagged {
+                body.push_str(&agent_s1::feed::sse_lagged(page.oldest));
+            }
+            for (offset, line) in page.lines.iter().enumerate() {
+                body.push_str(&agent_s1::feed::sse_frame(line, cursor + offset as u64 + 1));
+            }
+            cursor = page.cursor;
+        }
+        if !body.is_empty() || std::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(STREAM_POLL_MS)).await;
+    }
+    if body.is_empty() {
+        // A heartbeat comment, so an idle feed keeps the connection honest rather
+        // than looking like a failure.
+        body.push_str(": heartbeat\n\n");
+    }
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "text/event-stream")
+        .header("cache-control", "no-store")
+        .body(Full::new(Bytes::from(body)))
+        .expect("a valid response")
+}
+
+fn default_filter() -> agent_contracts::store::EventFilter {
+    agent_s1::feed::filter_from_query("").0
 }
 
 fn json(status: StatusCode, body: &serde_json::Value) -> Response<Full<Bytes>> {

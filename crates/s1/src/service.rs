@@ -25,6 +25,7 @@ use crate::budget::{AccountState, BudgetAccount, Ledger};
 use crate::config::Config;
 use crate::error::{Result, S1Error};
 use crate::experiments::{Experiments, Submission};
+use crate::feed::{Feed, Line};
 use crate::killswitch::{KillSwitches, Scope};
 use crate::policy::Draft as PolicyDraft;
 use crate::promotions::Promotions;
@@ -105,6 +106,9 @@ pub struct Service {
     pub promotions: Promotions,
     pub projections: Projections,
     pub sink: TelemetrySink,
+    /// The recent-event window the dashboard reads. A projection of the log, and
+    /// bounded: the store has the history.
+    pub feed: Feed,
     pub instances: Registry,
     pub policy_draft: Option<PolicyDraft>,
     pub policy_in_force: Option<DeploymentPolicy>,
@@ -135,6 +139,7 @@ impl Service {
             promotions: Promotions::new(),
             projections: Projections::new(),
             sink: TelemetrySink::new(),
+            feed: Feed::new(),
             instances: Registry::new(),
             policy_draft: None,
             policy_in_force: None,
@@ -154,6 +159,7 @@ impl Service {
         now: Timestamp,
     ) -> ApiResponse {
         let route = Route::parse(method, path);
+        let query = path.split_once('?').map(|(_, q)| q).unwrap_or("");
         let principal = token.and_then(|token| self.identities.resolve(token, now));
         // An instance's principal does not come from the token table: it comes from
         // the envelope's signature, checked by the sink. The route is admitted for
@@ -179,7 +185,7 @@ impl Service {
             return ApiResponse::ok(previous.clone());
         }
         let actor = admitted.actor.clone().unwrap_or(Actor::System("s1".into()));
-        let outcome = self.dispatch(&route, &actor, body, now);
+        let outcome = self.dispatch(&route, &actor, body, query, now);
         match outcome {
             Ok(response) => {
                 if let Some(key) = admitted.idempotency_key
@@ -198,6 +204,7 @@ impl Service {
         route: &Route,
         actor: &Actor,
         body: &Value,
+        query: &str,
         now: Timestamp,
     ) -> Result<ApiResponse> {
         match route {
@@ -303,14 +310,41 @@ impl Service {
 
             Route::Telemetry => self.ingest_telemetry(body, now),
 
+            // The recent window, from the feed. A caller asking for more than the
+            // window is told so (`lagged`) rather than served a truncated range.
+            Route::QueryEvents => {
+                let (filter, ignored) = crate::feed::filter_from_query(query);
+                let since = query_value(query, "since")
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(0);
+                let limit = query_value(query, "limit")
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .unwrap_or(100)
+                    .min(1_000);
+                let page = self.feed.query(since, &filter, limit);
+                Ok(ApiResponse::ok(json!({
+                    "lines": page.lines,
+                    "cursor": page.cursor,
+                    "lagged": page.lagged,
+                    "oldest": page.oldest,
+                    // Named rather than ignored: a filter this window cannot
+                    // honour is a query for the store.
+                    "unhonoured": crate::feed::unsupported(&filter),
+                    "ignored": ignored,
+                })))
+            }
+            // The stream is the HTTP layer's, because it owns the connection. This
+            // answers with the cursor to start from, so a client that cannot do SSE
+            // polls the same data.
+            Route::SubscribeEvents => Ok(ApiResponse::ok(json!({
+                "cursor": self.feed.cursor(),
+                "poll": "/events?since=<cursor>",
+            }))),
             // These need the store, which the HTTP layer holds: the handler here
             // reports that rather than pretending to serve from the read models,
             // because a lineage view that silently showed a projection would be a
             // different claim than the log's.
-            Route::GetLineage(_)
-            | Route::GetUnit(_)
-            | Route::QueryEvents
-            | Route::SubscribeEvents => Err(S1Error::Unavailable {
+            Route::GetLineage(_) | Route::GetUnit(_) => Err(S1Error::Unavailable {
                 detail: "this route is served from the store by the HTTP layer".to_owned(),
             }),
             Route::DrainMember(_) => Err(S1Error::Unavailable {
@@ -559,6 +593,30 @@ impl Service {
         std::mem::take(&mut self.outbox)
     }
 
+    /// Record what the writer appended, for the dashboard's window.
+    ///
+    /// Called **after** the append, never before: the feed shows what is in the
+    /// log, and a feed that showed intentions would let an operator act on a write
+    /// that was then fenced out.
+    pub fn appended(
+        &mut self,
+        shard: &str,
+        seq: u64,
+        draft: &Draft,
+        actor: &Actor,
+        now: Timestamp,
+    ) {
+        self.feed.record_line(Line {
+            seq,
+            shard: shard.to_owned(),
+            kind: draft.kind.to_owned(),
+            actor: actor_name(actor),
+            subject: draft.subject.as_str().to_owned(),
+            ts: now,
+            data: draft.data.clone(),
+        });
+    }
+
     pub fn register_instance(&mut self, instance: &str, key: &str) {
         self.instances.register(InstanceKey {
             instance: instance.to_owned(),
@@ -574,6 +632,15 @@ fn actor_name(actor: &Actor) -> String {
             id.clone()
         }
     }
+}
+
+/// One value out of a query string.
+fn query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
+    query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(k, _)| *k == key)
+        .map(|(_, v)| v)
 }
 
 fn parse_hash(text: &str) -> Result<HashId> {

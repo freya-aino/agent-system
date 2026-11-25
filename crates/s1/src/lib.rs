@@ -58,6 +58,7 @@ pub mod budget;
 pub mod config;
 pub mod error;
 pub mod experiments;
+pub mod feed;
 pub mod killswitch;
 pub mod plugins;
 pub mod policy;

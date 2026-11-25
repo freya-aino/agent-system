@@ -1,0 +1,20 @@
+{
+  "name": "agent-system-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The S1 management interface: the served surface, live swarms, the incorporate workflow, allocation and the capacity trade.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./jsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "3.1.2",
+    "svelte": "4.2.19",
+    "svelte-check": "3.8.6",
+    "vite": "5.4.11"
+  },
+  "dependencies": {}
+}
