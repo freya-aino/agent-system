@@ -46,6 +46,7 @@ pub mod journal;
 pub mod operators;
 pub mod population;
 pub mod proposal;
+pub mod propose;
 pub mod racing;
 pub mod selection;
 pub mod step;

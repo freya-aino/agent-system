@@ -69,6 +69,7 @@ pub mod error;
 pub mod events;
 pub mod mcmc;
 pub mod reward;
+pub mod rl;
 pub mod sentinel;
 pub mod subtree;
 pub mod surrogate;

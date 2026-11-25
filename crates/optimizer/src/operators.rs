@@ -194,12 +194,12 @@ fn pick<'a, T>(rng: &mut Rng, items: &'a [T]) -> Option<&'a T> {
 
 /// A new version string for a mutated primitive: immutability means a new identity,
 /// and the identity should say where it came from.
-fn bumped(version: &str, operator: &str, seed: u64) -> String {
+pub(crate) fn bumped(version: &str, operator: &str, seed: u64) -> String {
     format!("{version}+{operator}.{seed:x}")
 }
 
 /// Replace a member primitive of a Node, returning the new Node's hash.
-fn remake_node(
+pub(crate) fn remake_node(
     ctx: &mut OperatorCtx<'_>,
     node: &Unit,
     slot: &str,
@@ -218,7 +218,7 @@ fn remake_node(
 
 /// Put the edited child Unit, clearing the inherited hash so the identity is derived
 /// from the new content and never copied from the parent.
-fn put_child(
+pub(crate) fn put_child(
     ctx: &mut OperatorCtx<'_>,
     mut child: Unit,
     operator: &str,
@@ -244,6 +244,19 @@ fn failed(operator: &str, diags: &[agent_contracts::Diagnostic]) -> OperatorErro
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join("; "),
+    }
+}
+
+impl OperatorError {
+    /// A refusal that is the *proposal's* fault rather than the parent's: a diff
+    /// that does not apply, a field outside the vocabulary, an edit that would
+    /// loosen a limit. Named so the proposer path does not have to reach for the
+    /// programmatic operators' helpers.
+    pub fn invalid(detail: impl Into<String>) -> OperatorError {
+        OperatorError::Failed {
+            operator: "llm_proposed".to_owned(),
+            detail: detail.into(),
+        }
     }
 }
 
@@ -598,38 +611,69 @@ impl Operator for RemoveNode {
             .ok_or_else(|| nothing(self.name(), "every node is a sole entry or exit"))?
             .clone();
 
-        let incoming: Vec<String> = graph
-            .edges
-            .iter()
-            .filter(|e| e.to == victim && e.from != victim)
-            .map(|e| e.from.clone())
-            .collect();
-        let outgoing: Vec<agent_contracts::unit::Edge> = graph
-            .edges
-            .iter()
-            .filter(|e| e.from == victim && e.to != victim)
-            .cloned()
-            .collect();
-
-        let slot = graph.nodes[&victim].slot.clone();
-        graph.nodes.remove(&victim);
-        graph.edges.retain(|e| e.from != victim && e.to != victim);
-        // Rewire: every predecessor inherits the victim's successors, keeping each
-        // out-edge's guard and join so the control flow is the parent's minus one hop.
-        for from in &incoming {
-            for out in &outgoing {
-                let mut edge = out.clone();
-                edge.from = from.clone();
-                graph.edges.push(edge);
-            }
-        }
-        graph.entry.retain(|id| id != &victim);
-        graph.exit.retain(|id| id != &victim);
-        // The slot goes with its node: an unused member would still be in the hash and
-        // in the closure, so the child would carry weight it does not run.
-        child.members.remove(&slot);
+        remove_named_node(&mut child, &victim)?;
         put_child(ctx, child, self.name())
     }
+}
+
+/// Remove one named node and rewire around it.
+///
+/// Shared by [`RemoveNode`], which picks the victim at random, and the LLM
+/// proposer, which is told which one: a second implementation of the rewiring would
+/// be a second set of rules about guards, joins and the graph's boundary.
+pub fn remove_named_node(child: &mut Unit, victim: &str) -> Result<(), OperatorError> {
+    let graph = child
+        .graph
+        .as_mut()
+        .ok_or_else(|| nothing("remove_node", "no graph"))?;
+    if !graph.nodes.contains_key(victim) {
+        return Err(nothing("remove_node", "no such node"));
+    }
+    if graph.nodes.len() < 2 {
+        return Err(nothing(
+            "remove_node",
+            "a one-node graph has nothing to remove",
+        ));
+    }
+    // An entry that is the only entry, or an exit that is the only exit, cannot go:
+    // the graph would lose its boundary.
+    if (graph.entry.contains(&victim.to_owned()) && graph.entry.len() == 1)
+        || (graph.exit.contains(&victim.to_owned()) && graph.exit.len() == 1)
+    {
+        return Err(nothing("remove_node", "that node is the graph's boundary"));
+    }
+
+    let incoming: Vec<String> = graph
+        .edges
+        .iter()
+        .filter(|e| e.to == victim && e.from != victim)
+        .map(|e| e.from.clone())
+        .collect();
+    let outgoing: Vec<agent_contracts::unit::Edge> = graph
+        .edges
+        .iter()
+        .filter(|e| e.from == victim && e.to != victim)
+        .cloned()
+        .collect();
+
+    let slot = graph.nodes[victim].slot.clone();
+    graph.nodes.remove(victim);
+    graph.edges.retain(|e| e.from != victim && e.to != victim);
+    // Rewire: every predecessor inherits the victim's successors, keeping each
+    // out-edge's guard and join so the control flow is the parent's minus one hop.
+    for from in &incoming {
+        for out in &outgoing {
+            let mut edge = out.clone();
+            edge.from = from.clone();
+            graph.edges.push(edge);
+        }
+    }
+    graph.entry.retain(|id| id != victim);
+    graph.exit.retain(|id| id != victim);
+    // The slot goes with its node: an unused member would still be in the hash and
+    // in the closure, so the child would carry weight it does not run.
+    child.members.remove(&slot);
+    Ok(())
 }
 
 /// Duplicate an existing Node and splice the copy in after it. The cheap way to grow
