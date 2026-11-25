@@ -6,13 +6,17 @@
 //! store needs them for filtering without knowing any payload shape.
 //!
 //! Shapes land here milestone by milestone, with the component that emits them.
-//! Present: the lineage and experiment kinds C6 emits, plus `dataset_built` and
+//! Present: the lineage and experiment kinds C6 emits, the archive and pool kinds
+//! C5 emits, the campaign kinds C7 emits, plus `dataset_built` and
 //! `budget_exhausted`. A kind whose emitter is not yet implemented is still stored
 //! and queryable — an unknown `data` shape is never a parse error, only an
 //! uninterpreted value.
 
 use serde::{Deserialize, Serialize};
 
+use std::collections::BTreeMap;
+
+use crate::campaign::{BaselineRun, MethodRef, StopPolicy, SurrogateUse};
 use crate::types::{Budget, HashId, MetricRef, Name, Population, TaskId};
 
 /// `committed`: a Unit is in the live set of its population.
@@ -160,6 +164,114 @@ pub struct Seed {
     pub labels: Vec<String>,
 }
 
+// ---------------------------------------------------------------------------
+// Archive and pools (C5)
+// ---------------------------------------------------------------------------
+
+/// `pool_admitted`: a Unit entered a bounded view. `displaced` names what left to
+/// make room, so the pair of events accounts for the cap exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PoolAdmitted {
+    pub pool: String,
+    pub unit: HashId,
+    pub rank: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub displaced: Option<HashId>,
+}
+
+/// `pool_evicted`: a Unit left a view. Pools are views, so this is never a
+/// deletion — the Unit stays retrievable from the archive for ever.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PoolEvicted {
+    pub pool: String,
+    pub unit: HashId,
+    pub reason: EvictionReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvictionReason {
+    Cap,
+    Rank,
+    Quarantined,
+    SpecChange,
+}
+
+/// `elite_replaced`: one cell changed hands. `comparison` is the
+/// `PairedComparison` object that justified it: replacement requires statistical
+/// dominance, so the evidence is part of the event rather than a note about it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EliteReplaced {
+    pub archive: HashId,
+    pub cell: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old: Option<HashId>,
+    pub new: HashId,
+    pub descriptor: BTreeMap<String, f64>,
+    pub comparison: HashId,
+}
+
+// ---------------------------------------------------------------------------
+// Campaigns (C7)
+// ---------------------------------------------------------------------------
+
+/// `campaign_started`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CampaignStarted {
+    pub campaign: HashId,
+    pub meta_optimizer: HashId,
+    pub optimizer_template: HashId,
+    pub budget: Budget,
+    pub seeds: Vec<HashId>,
+    pub method: MethodRef,
+    pub stop: StopPolicy,
+}
+
+/// `campaign_stopped`. `confirmed_by_real_eval` is not decoration: a plateau that
+/// no real evaluation confirmed is a different claim from one that was.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CampaignStopped {
+    pub campaign: HashId,
+    pub reason: StopReason,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    pub confirmed_by_real_eval: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopReason {
+    Plateau,
+    Budget,
+    Manual,
+    Diverged,
+    /// A reweighting is a new Meta-Optimizer Unit, so it stops the campaign and
+    /// starts another rather than editing one in flight.
+    Reweighted,
+}
+
+/// `baseline_result`: the whole `BaselineRun`.
+pub type BaselineResult = BaselineRun;
+/// `surrogate_used`: the whole `SurrogateUse`.
+pub type SurrogateUsed = SurrogateUse;
+
+/// `sentinel_result`: a stable Unit re-run as a drift canary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SentinelResult {
+    pub sentinel: HashId,
+    pub unit: HashId,
+    pub evaluation: HashId,
+    pub shift: f64,
+    pub verdict: SentinelVerdict,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SentinelVerdict {
+    Stable,
+    Shifted,
+}
+
 /// `NodeFailDetail` (C6-owned, registered in events.md under "Component payload
 /// schemas"): why a changed Node failed its minimal-IO screen. It travels in
 /// `Outcome.detail_ref`, so the shape crosses the component boundary and lives here.
@@ -213,6 +325,14 @@ mod tests {
             "dataset_built",
             "budget_exhausted",
             "experiment_outcome",
+            "pool_admitted",
+            "pool_evicted",
+            "elite_replaced",
+            "campaign_started",
+            "campaign_stopped",
+            "baseline_result",
+            "surrogate_used",
+            "sentinel_result",
         ] {
             assert!(crate::store::is_known_kind(kind), "{kind}");
         }

@@ -15,6 +15,8 @@ pub mod disk;
 pub mod memory;
 #[cfg(feature = "postgres")]
 pub mod postgres;
+#[cfg(feature = "qdrant")]
+pub mod qdrant;
 #[cfg(feature = "s3")]
 pub mod s3;
 

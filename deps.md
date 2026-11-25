@@ -65,5 +65,16 @@ is a deterministic step machine that emits events for the shard writer to append
 C13 drives C2, which is itself synchronous (the decision recorded above for the
 provider client). The loop therefore builds and runs with no external service.
 
+**Activated by C5 and the Qdrant `VectorIndex` (2026-11-25), none new.** The archive
+crate is pure and synchronous like C3: `serde`, `serde_json`, `thiserror`, `proptest`
+in tests, every statistic from C0, every hash through C0's encoder, and no async
+runtime — it emits events for the shard writer and resolves Unit bodies through C1.
+The Qdrant client is in-house over the HTTP/1.1 transport the S3 client already uses
+(`hyper`, `tokio-rustls`), now shared as `store::http` behind a `http` feature that
+`s3` and `qdrant` both enable; the note in `backend/s3.rs` said the third copy of
+that transport should become one, and Qdrant was the third. The in-process
+exact-search `VectorIndex` needs nothing at all, which is what keeps the
+single-binary profile free of external services.
+
 Headroom: 6. Likely first additions if needed: a compression crate for blobs, and a regex crate if the
 hand-written anchored matcher in the guard DSL and `Subsumes` proves insufficient.

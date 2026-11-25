@@ -35,11 +35,14 @@ pub mod blob;
 pub mod clock;
 pub mod error;
 pub mod graph;
+#[cfg(feature = "http")]
+pub mod http;
 pub mod index;
 pub mod lease;
 pub mod log;
 pub mod publish;
 pub mod query;
+pub mod vector;
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -59,6 +62,7 @@ pub use crate::graph::{GraphIndex, GraphRecord};
 pub use crate::index::{BlobMeta, BlobState, EdgeRow};
 pub use crate::log::{EventDraft, Subscription, event_hash};
 pub use crate::publish::BundleInspector;
+pub use crate::vector::{InProcessVectorIndex, VectorIndex};
 
 /// The canonicalisation version this build writes (`hash.md`, `hash_spec: 1`).
 pub const HASH_SPEC: u32 = 1;

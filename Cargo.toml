@@ -7,6 +7,7 @@ members = [
     "crates/runtime",
     "crates/store",
     "crates/metrics",
+    "crates/archive",
     "crates/swarm",
     "crates/optimizer",
 ]
@@ -18,6 +19,7 @@ license = "UNLICENSED"
 publish = false
 
 [workspace.dependencies]
+agent-archive = { path = "crates/archive" }
 agent-contracts = { path = "crates/contracts" }
 agent-core = { path = "crates/core" }
 agent-library = { path = "crates/library" }

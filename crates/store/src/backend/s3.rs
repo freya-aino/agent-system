@@ -1,24 +1,22 @@
 //! S3-compatible object store (Garage in compose, any S3 in production).
 //!
-//! The client is in-house (`deps.md`): SigV4 signing here, HTTP/1.1 framing by
-//! `hyper`, TLS by `tokio-rustls`. No connector crate is needed because a request
-//! is one `http1::handshake` over a TCP or TLS stream — the same shape as C2's
-//! provider client, which is the precedent for "we write the client, not the
-//! protocol".
+//! The client is in-house (`deps.md`): SigV4 signing here, the transport by
+//! [`crate::http`]. No connector crate is needed because a request is one
+//! `http1::handshake` over a TCP or TLS stream — the same shape as C2's provider
+//! client, which is the precedent for "we write the client, not the protocol".
 //!
 //! Only the object space lives here; the log and the index are a different space
 //! and a different backend ([`super::Split`]).
 
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use http_body_util::{BodyExt, Full};
+use http_body_util::Full;
 use hyper::header::{AUTHORIZATION, CONTENT_LENGTH, HOST, IF_NONE_MATCH};
 use hyper::{Method, Request, StatusCode};
 use sha2::{Digest, Sha256};
-use tokio::net::TcpStream;
 
 use super::{BackendError, BackendResult, ObjectStore};
+use crate::http::Http;
 
 /// Where the bucket is and how to sign for it. Credentials are passed in from the
 /// deployment's `SecretRef` resolution; they are never stored in a hashed object.
@@ -55,31 +53,15 @@ impl S3Config {
     }
 }
 
-struct Target {
-    secure: bool,
-    host: String,
-    port: u16,
-}
-
 pub struct S3ObjectStore {
     config: S3Config,
-    target: Target,
-    tls: Option<Arc<rustls::ClientConfig>>,
+    http: Http,
 }
 
 impl S3ObjectStore {
     pub fn new(config: S3Config) -> BackendResult<Self> {
-        let target = parse_endpoint(&config.endpoint)?;
-        let tls = if target.secure {
-            Some(build_tls_config(config.ca_bundle.as_deref()).map_err(BackendError::Invalid)?)
-        } else {
-            None
-        };
-        Ok(S3ObjectStore {
-            config,
-            target,
-            tls,
-        })
+        let http = Http::new(&config.endpoint, config.ca_bundle.as_deref(), WHAT)?;
+        Ok(S3ObjectStore { config, http })
     }
 
     /// Creates the bucket if it is absent. Used by the compose profile's start-up;
@@ -119,16 +101,10 @@ impl S3ObjectStore {
     }
 
     fn host_header(&self) -> String {
-        let host = if self.config.path_style {
-            self.target.host.clone()
+        if self.config.path_style {
+            self.http.host_header()
         } else {
-            format!("{}.{}", self.config.bucket, self.target.host)
-        };
-        let default_port = if self.target.secure { 443 } else { 80 };
-        if self.target.port == default_port {
-            host
-        } else {
-            format!("{host}:{}", self.target.port)
+            format!("{}.{}", self.config.bucket, self.http.host_header())
         }
     }
 
@@ -182,56 +158,7 @@ impl S3ObjectStore {
             .body(Full::new(bytes::Bytes::from(body)))
             .map_err(|e| BackendError::Invalid(format!("malformed S3 request: {e}")))?;
 
-        let stream = TcpStream::connect((self.target.host.as_str(), self.target.port))
-            .await
-            .map_err(|e| BackendError::Unavailable(format!("connect to S3: {e}")))?;
-        let response = match &self.tls {
-            None => {
-                self.exchange(hyper_util::rt::TokioIo::new(stream), request)
-                    .await?
-            }
-            Some(tls) => {
-                let server_name = rustls::pki_types::ServerName::try_from(self.target.host.clone())
-                    .map_err(|e| BackendError::Invalid(format!("S3 host is not a name: {e}")))?;
-                let connector = tokio_rustls::TlsConnector::from(Arc::clone(tls));
-                let tls_stream = connector
-                    .connect(server_name, stream)
-                    .await
-                    .map_err(|e| BackendError::Unavailable(format!("TLS to S3: {e}")))?;
-                self.exchange(hyper_util::rt::TokioIo::new(tls_stream), request)
-                    .await?
-            }
-        };
-        Ok(response)
-    }
-
-    async fn exchange<I>(
-        &self,
-        io: I,
-        request: Request<Full<bytes::Bytes>>,
-    ) -> BackendResult<(StatusCode, Vec<u8>)>
-    where
-        I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
-    {
-        let (mut sender, connection) = hyper::client::conn::http1::handshake(io)
-            .await
-            .map_err(|e| BackendError::Unavailable(format!("S3 handshake: {e}")))?;
-        tokio::spawn(async move {
-            let _ = connection.await;
-        });
-        let response = sender
-            .send_request(request)
-            .await
-            .map_err(|e| BackendError::Unavailable(format!("S3 request: {e}")))?;
-        let status = response.status();
-        let body = response
-            .into_body()
-            .collect()
-            .await
-            .map_err(|e| BackendError::Unavailable(format!("S3 body: {e}")))?
-            .to_bytes()
-            .to_vec();
-        Ok((status, body))
+        self.http.send(request).await
     }
 }
 
@@ -302,40 +229,11 @@ impl ObjectStore for S3ObjectStore {
     }
 }
 
-fn status_error(status: StatusCode, body: &[u8]) -> BackendError {
-    let detail = String::from_utf8_lossy(&body[..body.len().min(512)]).into_owned();
-    if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
-        BackendError::Unavailable(format!("S3 {status}: {detail}"))
-    } else {
-        BackendError::Io(format!("S3 {status}: {detail}"))
-    }
-}
+/// The name this client goes by in every error it raises.
+const WHAT: &str = "S3";
 
-fn parse_endpoint(endpoint: &str) -> BackendResult<Target> {
-    let (secure, rest) = match endpoint.split_once("://") {
-        Some(("https", rest)) => (true, rest),
-        Some(("http", rest)) => (false, rest),
-        _ => {
-            return Err(BackendError::Invalid(format!(
-                "S3 endpoint {endpoint:?} needs an http(s) scheme"
-            )));
-        }
-    };
-    let rest = rest.trim_end_matches('/');
-    let (host, port) = match rest.rsplit_once(':') {
-        Some((host, port)) if port.chars().all(|c| c.is_ascii_digit()) && !port.is_empty() => (
-            host.to_owned(),
-            port.parse::<u16>()
-                .map_err(|_| BackendError::Invalid(format!("S3 port in {endpoint:?}")))?,
-        ),
-        _ => (rest.to_owned(), if secure { 443 } else { 80 }),
-    };
-    if host.is_empty() {
-        return Err(BackendError::Invalid(format!(
-            "S3 endpoint {endpoint:?} has no host"
-        )));
-    }
-    Ok(Target { secure, host, port })
+fn status_error(status: StatusCode, body: &[u8]) -> BackendError {
+    crate::http::status_error(WHAT, status, body)
 }
 
 // ---------------------------------------------------------------------------
@@ -434,131 +332,6 @@ fn uri_encode_path(path: &str) -> String {
     out
 }
 
-// ---------------------------------------------------------------------------
-// TLS roots
-// ---------------------------------------------------------------------------
-
-/// Trust roots from PEM on disk, with no way to disable verification: a deployment
-/// with no trust store fails loudly instead.
-///
-/// C2's provider client has the same helper. Two copies is the cheaper trade than a
-/// shared crate neither component owns — C0 is pure and does no I/O — but a third
-/// copy should move this into one place.
-const DEFAULT_CA_BUNDLES: &[&str] = &[
-    "/etc/ssl/certs/ca-certificates.crt",
-    "/etc/pki/tls/certs/ca-bundle.crt",
-    "/etc/ssl/cert.pem",
-];
-
-fn build_tls_config(
-    ca_bundle: Option<&std::path::Path>,
-) -> Result<Arc<rustls::ClientConfig>, String> {
-    let candidates: Vec<std::path::PathBuf> = match ca_bundle {
-        Some(p) => vec![p.to_path_buf()],
-        None => DEFAULT_CA_BUNDLES
-            .iter()
-            .map(std::path::PathBuf::from)
-            .collect(),
-    };
-    let mut roots = rustls::RootCertStore::empty();
-    let mut loaded = 0usize;
-    for path in &candidates {
-        let Ok(pem) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        let certs: Vec<_> = pem_certificates(&pem)
-            .into_iter()
-            .map(rustls::pki_types::CertificateDer::from)
-            .collect();
-        if certs.is_empty() {
-            continue;
-        }
-        let (valid, _) = roots.add_parsable_certificates(certs);
-        loaded += valid;
-        if loaded > 0 {
-            break;
-        }
-    }
-    if loaded == 0 {
-        return Err(format!(
-            "no TLS trust roots could be loaded; tried {}",
-            candidates
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let config = rustls::ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .map_err(|e| format!("rustls rejected the default protocol versions: {e}"))?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    Ok(Arc::new(config))
-}
-
-fn pem_certificates(pem: &str) -> Vec<Vec<u8>> {
-    const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
-    const END: &str = "-----END CERTIFICATE-----";
-    let mut out = Vec::new();
-    let mut rest = pem;
-    while let Some(start) = rest.find(BEGIN) {
-        let after = &rest[start + BEGIN.len()..];
-        let Some(end) = after.find(END) else { break };
-        let body: String = after[..end]
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect();
-        if let Ok(der) = base64_decode(&body) {
-            out.push(der);
-        }
-        rest = &after[end + END.len()..];
-    }
-    out
-}
-
-fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
-    let bytes = input.as_bytes();
-    if !bytes.len().is_multiple_of(4) {
-        return Err(format!("length {} is not a multiple of 4", bytes.len()));
-    }
-    let value = |c: u8| -> Option<u8> {
-        match c {
-            b'A'..=b'Z' => Some(c - b'A'),
-            b'a'..=b'z' => Some(c - b'a' + 26),
-            b'0'..=b'9' => Some(c - b'0' + 52),
-            b'+' => Some(62),
-            b'/' => Some(63),
-            _ => None,
-        }
-    };
-    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-    for chunk in bytes.chunks(4) {
-        let pad = chunk.iter().filter(|c| **c == b'=').count();
-        if pad > 2 {
-            return Err("too much padding".to_owned());
-        }
-        let mut acc = 0u32;
-        for (i, c) in chunk.iter().enumerate() {
-            let six = if *c == b'=' {
-                0
-            } else {
-                value(*c).ok_or_else(|| format!("invalid base64 character {:?}", *c as char))?
-            };
-            acc |= (six as u32) << (18 - 6 * i);
-        }
-        out.push((acc >> 16) as u8);
-        if pad < 2 {
-            out.push((acc >> 8) as u8);
-        }
-        if pad < 1 {
-            out.push(acc as u8);
-        }
-    }
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -606,17 +379,8 @@ mod tests {
 
     #[test]
     fn endpoints_and_paths() {
-        let t = parse_endpoint("http://garage:3900").unwrap();
-        assert!(!t.secure && t.host == "garage" && t.port == 3900);
-        let t = parse_endpoint("https://s3.amazonaws.com").unwrap();
-        assert!(t.secure && t.port == 443);
-        assert!(parse_endpoint("garage:3900").is_err());
-
-        let store = S3ObjectStore {
-            config: S3Config::garage("http://garage:3900", "agent-store"),
-            target: parse_endpoint("http://garage:3900").unwrap(),
-            tls: None,
-        };
+        let store =
+            S3ObjectStore::new(S3Config::garage("http://garage:3900", "agent-store")).unwrap();
         assert_eq!(
             store.object_path("inbound/sha256/abcd"),
             "/agent-store/inbound/sha256/abcd"

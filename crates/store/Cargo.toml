@@ -12,7 +12,12 @@ default = []
 # The durable profiles. Off by default so the dev profile and the test suite build
 # and run with no external services (docs/stack.md).
 postgres = ["dep:tokio-postgres", "dep:postgres-types"]
-s3 = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:bytes", "dep:tokio-rustls", "dep:rustls"]
+# The shared HTTP/1.1 + TLS transport (`http`), used by the S3 object store and the
+# Qdrant vector index; neither client is useful without it and both want the same
+# dependency set.
+http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:bytes", "dep:tokio-rustls", "dep:rustls"]
+s3 = ["http"]
+qdrant = ["http"]
 
 [dependencies]
 agent-contracts.workspace = true
