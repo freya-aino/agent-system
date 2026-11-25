@@ -40,9 +40,13 @@ pub trait InstanceKey {
 /// nothing but the sequence it acknowledged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ack {
-    Accepted { ack_seq: u64 },
+    Accepted {
+        ack_seq: u64,
+    },
     /// A reason code, never a command.
-    Rejected { code: &'static str },
+    Rejected {
+        code: &'static str,
+    },
 }
 
 /// `push(envelope_batch) -> ack`.
@@ -77,11 +81,7 @@ impl Transport for Spool {
             if self.capacity > 0 && self.spooled.len() >= self.capacity {
                 // Drop the oldest *droppable* envelope, never a summary, kill or
                 // error envelope.
-                match self
-                    .spooled
-                    .iter()
-                    .position(droppable)
-                {
+                match self.spooled.iter().position(droppable) {
                     Some(index) => {
                         self.spooled.remove(index);
                         self.dropped += 1;
@@ -233,7 +233,10 @@ pub fn build(
 pub fn unsigned_value(envelope: &TelemetryEnvelope) -> Result<serde_json::Value, ObsError> {
     let value = serde_json::to_value(envelope)
         .map_err(|e| ObsError::invalid("envelope", format!("not encodable: {e}")))?;
-    Ok(canon::hashable_view_excluding(&value, &["sig", "envelope_id"]))
+    Ok(canon::hashable_view_excluding(
+        &value,
+        &["sig", "envelope_id"],
+    ))
 }
 
 /// The bytes an instance key signs.
@@ -375,7 +378,10 @@ pub(crate) mod tests {
     #[test]
     fn an_envelope_is_identified_by_its_content_and_signed_over_it() {
         let built = envelope(1, &builder(0));
-        assert_eq!(built.shard, "s2:s2-a", "the sink checks this against the key");
+        assert_eq!(
+            built.shard, "s2:s2-a",
+            "the sink checks this against the key"
+        );
         assert_eq!(built.scrubber_version, SCRUBBER_VERSION);
         assert_ne!(built.envelope_id, HashId::from_sha256([0; 32]));
         assert!(!built.sig.sig.is_empty());

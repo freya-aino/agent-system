@@ -42,10 +42,7 @@ pub fn version_of(protocol: ProtocolName) -> Version {
 }
 
 /// `describe(bundle) -> descriptor`: what the adapter advertises.
-pub fn describe(
-    protocol: ProtocolName,
-    functions: &[FunctionDescriptor],
-) -> AdapterDescriptor {
+pub fn describe(protocol: ProtocolName, functions: &[FunctionDescriptor]) -> AdapterDescriptor {
     AdapterDescriptor {
         name: protocol,
         version: version_of(protocol),
@@ -105,9 +102,13 @@ pub fn to_task(
         ProtocolName::Mcp => (
             string_at(raw, "name")?,
             raw.get("arguments").cloned().unwrap_or(Value::Null),
-            raw.get("sessionId").and_then(Value::as_str).map(str::to_owned),
+            raw.get("sessionId")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
             raw.get("stream").and_then(Value::as_bool).unwrap_or(false),
-            raw.get("noSample").and_then(Value::as_bool).unwrap_or(false),
+            raw.get("noSample")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             raw.get("id").and_then(Value::as_str).map(str::to_owned),
         ),
         ProtocolName::A2a => (
@@ -120,9 +121,13 @@ pub fn to_task(
                 .and_then(|message| message.get("parts"))
                 .cloned()
                 .unwrap_or(Value::Null),
-            raw.get("contextId").and_then(Value::as_str).map(str::to_owned),
+            raw.get("contextId")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
             raw.get("stream").and_then(Value::as_bool).unwrap_or(false),
-            raw.get("noSample").and_then(Value::as_bool).unwrap_or(false),
+            raw.get("noSample")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             raw.get("taskId").and_then(Value::as_str).map(str::to_owned),
         ),
         ProtocolName::Openai => (
@@ -172,11 +177,7 @@ pub fn to_task(
         flags: Flags {
             no_sample,
             // The flag is a veto, never a grant.
-            stream: Flags {
-                no_sample,
-                stream,
-            }
-            .stream_allowed(deployment_streams),
+            stream: Flags { no_sample, stream }.stream_allowed(deployment_streams),
         },
         protocol: ProtocolRef {
             name: protocol,
@@ -395,7 +396,10 @@ mod tests {
             assert_eq!(names.len(), 2);
             assert_ne!(names[0], names[1]);
         }
-        assert_eq!(endpoint_of(ProtocolName::Mcp, &"answer".to_owned()), "answer");
+        assert_eq!(
+            endpoint_of(ProtocolName::Mcp, &"answer".to_owned()),
+            "answer"
+        );
         assert_eq!(
             endpoint_of(ProtocolName::A2a, &"answer".to_owned()),
             "skill/answer"
@@ -515,7 +519,14 @@ mod tests {
             "messages": [],
             "store": true
         });
-        let task = to_task(ProtocolName::Openai, &storing, caller(), &advertised(), true).unwrap();
+        let task = to_task(
+            ProtocolName::Openai,
+            &storing,
+            caller(),
+            &advertised(),
+            true,
+        )
+        .unwrap();
         assert!(!task.flags.no_sample);
     }
 
@@ -556,7 +567,10 @@ mod tests {
         assert_eq!(http_status(ErrorCode::Overloaded), 429);
 
         let refused = result(None, Some(ErrorCode::Refused));
-        assert_eq!(from_result(ProtocolName::A2a, &refused)["status"], "rejected");
+        assert_eq!(
+            from_result(ProtocolName::A2a, &refused)["status"],
+            "rejected"
+        );
         assert_eq!(http_status(ErrorCode::Refused), 403);
         assert_eq!(http_status(ErrorCode::UnknownFunction), 404);
         assert_eq!(http_status(ErrorCode::SessionReset), 409);

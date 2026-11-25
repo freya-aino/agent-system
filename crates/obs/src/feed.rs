@@ -45,12 +45,7 @@ pub struct FeedDefinition {
 }
 
 impl FeedDefinition {
-    pub fn new(
-        name: &str,
-        kinds: &[&str],
-        group_by: &[&str],
-        metrics: &[&str],
-    ) -> FeedDefinition {
+    pub fn new(name: &str, kinds: &[&str], group_by: &[&str], metrics: &[&str]) -> FeedDefinition {
         let mut definition = FeedDefinition {
             id: HashId::from_sha256([0; 32]),
             name: name.to_owned(),
@@ -154,9 +149,7 @@ pub struct Row {
 pub fn aggregate(observations: &[(String, BTreeMap<String, f64>)]) -> Vec<Row> {
     let mut grouped: BTreeMap<String, (u64, BTreeMap<String, Vec<f64>>)> = BTreeMap::new();
     for (group, values) in observations {
-        let entry = grouped
-            .entry(group.clone())
-            .or_insert((0, BTreeMap::new()));
+        let entry = grouped.entry(group.clone()).or_insert((0, BTreeMap::new()));
         entry.0 += 1;
         for (name, value) in values {
             entry.1.entry(name.clone()).or_default().push(*value);
@@ -286,7 +279,10 @@ fn otel_span(span: &SpanCf) -> Value {
     let mut attributes = vec![
         attribute("agent.unit", Value::String(span.unit.to_string())),
         attribute("agent.node_run", Value::String(span.node_run.clone())),
-        attribute("agent.run_class", Value::String(span.class.as_str().to_owned())),
+        attribute(
+            "agent.run_class",
+            Value::String(span.class.as_str().to_owned()),
+        ),
         attribute("gen_ai.usage.input_tokens", Value::from(span.tokens_in)),
         attribute("gen_ai.usage.output_tokens", Value::from(span.tokens_out)),
         attribute("agent.cost", Value::from(span.cost)),
@@ -310,7 +306,10 @@ fn otel_span(span: &SpanCf) -> Value {
         }
     }
     if let Some(ttft) = span.ttft_ms {
-        attributes.push(attribute("gen_ai.server.time_to_first_token", Value::from(ttft)));
+        attributes.push(attribute(
+            "gen_ai.server.time_to_first_token",
+            Value::from(ttft),
+        ));
     }
     if let Some(gen_ms) = span.gen_ms {
         attributes.push(attribute("agent.generation_ms", Value::from(gen_ms)));
@@ -443,11 +442,10 @@ mod tests {
         let envelope = envelope(1, &builder(0));
         let export = export_otel(&envelope);
         let resource = &export["resourceSpans"][0]["resource"]["attributes"];
-        let stamped = resource
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|a| a["key"] == "semconv.version" && a["value"]["stringValue"] == OTEL_SEMCONV);
+        let stamped =
+            resource.as_array().unwrap().iter().any(|a| {
+                a["key"] == "semconv.version" && a["value"]["stringValue"] == OTEL_SEMCONV
+            });
         assert!(stamped, "an unpinned export would silently change meaning");
         assert_eq!(
             export["resourceSpans"][0]["scopeSpans"][0]["scope"]["version"],

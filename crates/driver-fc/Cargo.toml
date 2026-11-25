@@ -1,0 +1,17 @@
+[package]
+name = "agent-driver-fc"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The Firecracker driver: jailer, snapshot restore, vsock frames and the credential-injecting egress proxy. Linux with KVM; the same Unit runs unchanged on the weaker drivers."
+
+[dependencies]
+agent-contracts.workspace = true
+agent-core.workspace = true
+agent-runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true

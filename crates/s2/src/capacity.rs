@@ -83,7 +83,9 @@ pub enum Admission {
     Defer,
     /// Only ever for a client, and only when front-facing demand alone exceeds
     /// capacity.
-    Overloaded { retry_after_ms: u64 },
+    Overloaded {
+        retry_after_ms: u64,
+    },
 }
 
 /// The controller's state: the share it has settled on and why.
@@ -130,8 +132,8 @@ impl Controller {
     pub fn observe(&mut self, load: &Load) {
         self.worst_p99 = self.worst_p99.max(load.observed_p99);
         let target = self.policy.slo.target_p99;
-        let no_margin = load.front_queued > 0
-            || (target > 0.0 && load.observed_p99 >= target * (1.0 - MARGIN));
+        let no_margin =
+            load.front_queued > 0 || (target > 0.0 && load.observed_p99 >= target * (1.0 - MARGIN));
         if target > 0.0 && load.observed_p99 > target {
             self.breaches += 1;
         }
@@ -194,10 +196,12 @@ impl Controller {
             }
             RunClass::InternalEval => {
                 let allowance = (f64::from(load.capacity) * self.internal_share).floor() as u32;
-                let reserve =
-                    (f64::from(load.capacity) * self.policy.front_reserve).ceil() as u32;
+                let reserve = (f64::from(load.capacity) * self.policy.front_reserve).ceil() as u32;
+                // The reserve is taken out first and the subtraction saturates, so
+                // a reserve wider than the capacity leaves no headroom rather than
+                // wrapping.
                 let headroom = load.capacity.saturating_sub(reserve);
-                let cap = allowance.min(headroom.max(0));
+                let cap = allowance.min(headroom);
                 if load.front_queued > 0 || load.internal_in_flight >= cap || load.saturated() {
                     Admission::Defer
                 } else {
@@ -435,10 +439,7 @@ mod tests {
             internal_max: 0.0,
             ..policy()
         });
-        assert_eq!(
-            none.admit(RunClass::InternalEval, &quiet),
-            Admission::Defer
-        );
+        assert_eq!(none.admit(RunClass::InternalEval, &quiet), Admission::Defer);
     }
 
     #[test]

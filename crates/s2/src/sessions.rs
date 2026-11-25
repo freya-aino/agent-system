@@ -106,7 +106,13 @@ impl Sessions {
     }
 
     /// Whether a drain may finish.
-    pub fn drained(&self, root: &HashId, started: Timestamp, max_drain_ms: u64, now: Timestamp) -> bool {
+    pub fn drained(
+        &self,
+        root: &HashId,
+        started: Timestamp,
+        max_drain_ms: u64,
+        now: Timestamp,
+    ) -> bool {
         self.pins_for(root) == 0 || now.saturating_sub(started) >= max_drain_ms as i64
     }
 
@@ -223,6 +229,9 @@ mod tests {
         sessions.pin("s-2", &root(1), 900);
         assert_eq!(sessions.expire(1_000), 1);
         assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions.resolve("s-2", &[root(1)], 1_000), Pin::Held(root(1)));
+        assert_eq!(
+            sessions.resolve("s-2", &[root(1)], 1_000),
+            Pin::Held(root(1))
+        );
     }
 }

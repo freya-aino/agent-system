@@ -19,9 +19,7 @@
 //! ([`crate::sink`]). A corpus that injects secrets, PII and prompt fragments into
 //! every emittable field is part of the test suite on both.
 
-use agent_contracts::telemetry::{
-    DEFAULT_BUCKET_MS, FORBIDDEN_FIELDS, SpanCf, SpanFlags,
-};
+use agent_contracts::telemetry::{DEFAULT_BUCKET_MS, FORBIDDEN_FIELDS, SpanCf, SpanFlags};
 use agent_contracts::trace_event::{Span, Trace};
 use agent_contracts::types::{RunClass, Timestamp};
 use agent_core::canon::{self, DomainTag};
@@ -285,13 +283,16 @@ pub(crate) mod tests {
         let trace = trace(false, RunClass::FrontFacing, false);
         let scrubbed = scrub(&trace, DEFAULT_BUCKET_MS);
         assert_eq!(
-            scrubbed[0].bucket,
-            1_200_000,
+            scrubbed[0].bucket, 1_200_000,
             "1_234_567 ms coarsened to the 60 s bucket"
         );
         assert_eq!(scrubbed[0].gen_ms, Some(380), "a duration is not a clock");
         assert_eq!(bucket(-1, 60_000), -60_000, "and it floors, not truncates");
-        assert_eq!(bucket(1_234_567, 0), 1_234_567, "a zero bucket is no bucket");
+        assert_eq!(
+            bucket(1_234_567, 0),
+            1_234_567,
+            "a zero bucket is no bucket"
+        );
     }
 
     #[test]

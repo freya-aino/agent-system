@@ -227,9 +227,7 @@ fn seed_of(request_id: &str) -> i64 {
 mod tests {
     use agent_contracts::types::{PriceEntry, PriceTable};
     use agent_runtime::exec::ManualClock;
-    use agent_runtime::provider::{
-        Connection, FakeConnector, FakeProvider, Protocol, RateLimits,
-    };
+    use agent_runtime::provider::{Connection, FakeConnector, FakeProvider, Protocol, RateLimits};
 
     use super::*;
 

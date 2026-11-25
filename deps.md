@@ -95,5 +95,16 @@ with `hyper-util`, `http-body-util`, `bytes` and `tokio` — no new entry in the
 table, and still no web framework: the front is four routes per protocol and a
 health route.
 
+**Activated by C2's Firecracker driver (2026-11-25), none new.** The Firecracker
+API is nine `PUT`/`PATCH` requests with JSON bodies over a unix socket, so the
+client is written out in `driver-fc/src/api.rs` rather than taken as a dependency:
+the same trade as the S3, Qdrant and provider clients, and the whole boot sequence
+fits in one value a test can assert on. The frame transport reuses C2's own
+`sandbox_proto` over vsock, which is what keeps one implementation of the protocol
+and lets a guest binary run unchanged under the process driver. `sha2` derives the
+guest cid and the image ids through C0's encoder; the jailer and the VMM are
+`std::process::Command`, and the egress proxy's decisions are pure. No async
+runtime: a VM boot is a handful of blocking calls, like the rest of C2.
+
 Headroom: 6. Likely first additions if needed: a compression crate for blobs, and a regex crate if the
 hand-written anchored matcher in the guard DSL and `Subsumes` proves insufficient.

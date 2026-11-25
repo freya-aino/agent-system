@@ -148,8 +148,8 @@ impl Config {
     /// used on the struct because the nested shapes are contract types, so the
     /// check is explicit here and names the key.
     pub fn from_toml(text: &str) -> Result<Config, S2Error> {
-        let config: Config = toml::from_str(text)
-            .map_err(|e| S2Error::invalid("config", format!("{e}")))?;
+        let config: Config =
+            toml::from_str(text).map_err(|e| S2Error::invalid("config", format!("{e}")))?;
         config.validate()?;
         Ok(config)
     }
@@ -279,9 +279,7 @@ impl Config {
                 level.as_str()
             )),
             (Profile::Dev, IsolationLevel::Microvm) => None,
-            (Profile::Dev, level) => {
-                Some(format!("dev profile on {} isolation", level.as_str()))
-            }
+            (Profile::Dev, level) => Some(format!("dev profile on {} isolation", level.as_str())),
         }
     }
 
@@ -373,10 +371,7 @@ pub(crate) mod tests {
         let mut container = config(Profile::Prod, IsolationLevel::Container);
         container.isolation.allow_weaker_isolation = true;
         let err = container.validate().unwrap_err();
-        assert!(
-            format!("{err}").contains("plain OCI container"),
-            "{err}"
-        );
+        assert!(format!("{err}").contains("plain OCI container"), "{err}");
 
         // A gVisor/Kata-class runtime is accepted *with* the override, and the
         // override is recorded.

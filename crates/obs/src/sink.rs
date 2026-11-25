@@ -98,11 +98,7 @@ impl Sink {
     }
 
     /// `ingest(batch) -> accepted | rejected(code)`, over the JSON that arrived.
-    pub fn ingest(
-        &mut self,
-        raw: &Value,
-        trust: &dyn TrustConfig,
-    ) -> Result<Ingested, ObsError> {
+    pub fn ingest(&mut self, raw: &Value, trust: &dyn TrustConfig) -> Result<Ingested, ObsError> {
         // 1. The content check, on the received shape. A field the envelope type
         //    cannot hold is exactly the case worth catching, and parsing first
         //    would silently drop it.
@@ -194,8 +190,7 @@ impl Sink {
             _ => None,
         };
         if last.is_none_or(|last| envelope.seq > last) {
-            self.last_seq
-                .insert(envelope.source.clone(), envelope.seq);
+            self.last_seq.insert(envelope.source.clone(), envelope.seq);
         }
 
         // 6. The events the shard writer appends.
@@ -400,7 +395,9 @@ mod tests {
         let envelope = envelope(1, &builder(0));
         let elsewhere = Trust::of(&key(), "s2-b");
         assert_eq!(
-            sink.ingest_envelope(&envelope, &elsewhere).unwrap().response,
+            sink.ingest_envelope(&envelope, &elsewhere)
+                .unwrap()
+                .response,
             IngestResponse::Rejected {
                 rejected: rejected::SHARD_MISMATCH.to_owned()
             }
@@ -440,10 +437,7 @@ mod tests {
                 rejected: rejected::SCRUB_VIOLATION.to_owned()
             }
         );
-        assert!(
-            ingested.events.is_empty(),
-            "never partially ingested"
-        );
+        assert!(ingested.events.is_empty(), "never partially ingested");
         let violation = ingested.violation.expect("a violation is raised");
         assert_eq!(violation.field, "payload_ref");
         assert_eq!(violation.source, "s2-a");
@@ -491,10 +485,7 @@ mod tests {
         assert_eq!(first.events.len(), 1);
         let second = sink.ingest_envelope(&envelope, &trust()).unwrap();
         assert!(second.duplicate, "delivery is at-least-once");
-        assert!(
-            second.events.is_empty(),
-            "and ingestion is exactly-once"
-        );
+        assert!(second.events.is_empty(), "and ingestion is exactly-once");
         assert_eq!(
             second.response,
             IngestResponse::Accepted {
@@ -507,18 +498,25 @@ mod tests {
     #[test]
     fn a_sequence_gap_raises_telemetry_gap() {
         let mut sink = Sink::new();
-        sink.ingest_envelope(&envelope(1, &builder(0)), &trust()).unwrap();
-        let ingested = sink.ingest_envelope(&envelope(5, &builder(0)), &trust()).unwrap();
+        sink.ingest_envelope(&envelope(1, &builder(0)), &trust())
+            .unwrap();
+        let ingested = sink
+            .ingest_envelope(&envelope(5, &builder(0)), &trust())
+            .unwrap();
         let gap = ingested.gap.expect("a gap is raised");
         assert_eq!((gap.from_seq, gap.to_seq), (2, 4));
         assert_eq!(gap.dropped_estimate, 3);
         assert!(ingested.events.iter().any(|d| d.kind == "telemetry_gap"));
 
         // Contiguous: no gap.
-        let ingested = sink.ingest_envelope(&envelope(6, &builder(0)), &trust()).unwrap();
+        let ingested = sink
+            .ingest_envelope(&envelope(6, &builder(0)), &trust())
+            .unwrap();
         assert!(ingested.gap.is_none());
         // Out of order: accepted, no gap, and the counter does not go backwards.
-        let ingested = sink.ingest_envelope(&envelope(3, &builder(0)), &trust()).unwrap();
+        let ingested = sink
+            .ingest_envelope(&envelope(3, &builder(0)), &trust())
+            .unwrap();
         assert!(ingested.gap.is_none());
         assert_eq!(sink.last_seq("s2-a"), Some(6));
     }
@@ -594,18 +592,19 @@ mod tests {
         let mut sink = Sink::new();
         let mut builder = builder(0);
         builder.events.push(event("something_newer"));
-        let ingested = sink.ingest_envelope(&envelope(1, &builder), &trust()).unwrap();
-        assert!(matches!(
-            ingested.response,
-            IngestResponse::Accepted { .. }
-        ));
+        let ingested = sink
+            .ingest_envelope(&envelope(1, &builder), &trust())
+            .unwrap();
+        assert!(matches!(ingested.response, IngestResponse::Accepted { .. }));
         assert_eq!(ingested.events[0].kind, "observability_degraded");
     }
 
     #[test]
     fn the_response_carries_nothing_but_an_ack() {
         let mut sink = Sink::new();
-        let ingested = sink.ingest_envelope(&envelope(1, &builder(0)), &trust()).unwrap();
+        let ingested = sink
+            .ingest_envelope(&envelope(1, &builder(0)), &trust())
+            .unwrap();
         let value = serde_json::to_value(&ingested.response).unwrap();
         assert_eq!(
             value.as_object().map(serde_json::Map::len),

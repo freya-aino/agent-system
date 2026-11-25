@@ -24,7 +24,9 @@ use agent_contracts::bundle::{
     RevocationEffect, RevocationFeed, RevocationScope, Signature, TrustRoot,
 };
 use agent_contracts::driver::IsolationLevel;
-use agent_contracts::front::{Caller, Flags, FrontCompletion, ProtocolName, ProtocolRef, TaskRequest};
+use agent_contracts::front::{
+    Caller, Flags, FrontCompletion, ProtocolName, ProtocolRef, TaskRequest,
+};
 use agent_contracts::metric::{MetricDef, MetricSuite, SuiteStage};
 use agent_contracts::telemetry::{
     AdapterRef, ClassCounts, IsolationLevel as TelemetryIsolation, LiveFitness, Window,
@@ -39,13 +41,13 @@ use agent_promotion::policy::{ChangeClass, GatePolicy};
 use agent_promotion::sign::{DevSigner, DevVerifier, SigningRequest, SigningService};
 use agent_router::plan::PlannerPolicy;
 use agent_router::select::RouterPolicy;
+use agent_s2::S2Error;
 use agent_s2::capacity::{Admission, Controller, Load};
 use agent_s2::config::{Config, HostLimits, IsolationConfig, Profile, TelemetryConfig};
 use agent_s2::deploy::{RegistrySource, Table};
 use agent_s2::live::Windows;
 use agent_s2::serve::{Cohort, Front, Runner};
 use agent_s2::sessions::Sessions;
-use agent_s2::S2Error;
 use sha2::{Digest, Sha256};
 
 // ---------------------------------------------------------------------------
@@ -919,11 +921,7 @@ fn the_egress_allowlist_is_exactly_the_bundles_connectors_plus_the_configured_on
         assert!(allowed.contains(name));
     }
     assert!(allowed.contains("openai"));
-    assert_eq!(
-        allowed.len(),
-        pinned.len() + 1,
-        "anything else is denied"
-    );
+    assert_eq!(allowed.len(), pinned.len() + 1, "anything else is denied");
 }
 
 #[test]

@@ -294,9 +294,7 @@ impl Windows {
 #[cfg(test)]
 mod tests {
     use agent_contracts::metric::SuiteStage;
-    use agent_contracts::trace_event::{
-        Completion, ContentFreeSummary, FailureKind, TraceStatus,
-    };
+    use agent_contracts::trace_event::{Completion, ContentFreeSummary, FailureKind, TraceStatus};
     use agent_metrics::def;
 
     use super::*;
@@ -503,7 +501,10 @@ mod tests {
             )
             .unwrap();
         assert!(!windows.paired(&incumbent, &candidate));
-        assert!(!windows.paired(&incumbent, &member(9)), "and an absent member never is");
+        assert!(
+            !windows.paired(&incumbent, &member(9)),
+            "and an absent member never is"
+        );
     }
 
     #[test]

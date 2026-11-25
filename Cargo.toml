@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/contracts",
+    "crates/driver-fc",
     "crates/core",
     "crates/library",
     "crates/runtime",
@@ -28,6 +29,7 @@ publish = false
 agent-archive = { path = "crates/archive" }
 agent-contracts = { path = "crates/contracts" }
 agent-core = { path = "crates/core" }
+agent-driver-fc = { path = "crates/driver-fc" }
 agent-library = { path = "crates/library" }
 agent-meta-optimizer = { path = "crates/meta-optimizer" }
 agent-metrics = { path = "crates/metrics" }

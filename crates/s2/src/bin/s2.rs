@@ -82,9 +82,10 @@ impl RegistrySource for DirectoryRegistry {
         paths.sort();
         let mut out = Vec::with_capacity(paths.len());
         for path in paths {
-            let text = std::fs::read_to_string(&path).map_err(|e| S2Error::RegistryUnreachable {
-                detail: format!("{}: {e}", path.display()),
-            })?;
+            let text =
+                std::fs::read_to_string(&path).map_err(|e| S2Error::RegistryUnreachable {
+                    detail: format!("{}: {e}", path.display()),
+                })?;
             out.push(
                 serde_json::from_str(&text)
                     .map_err(|e| S2Error::invalid("bundle", format!("{}: {e}", path.display())))?,
@@ -187,7 +188,11 @@ fn now_ms() -> i64 {
 
 type Body = Full<Bytes>;
 
-fn json(status: StatusCode, value: &serde_json::Value, retry_after_ms: Option<u64>) -> Response<Body> {
+fn json(
+    status: StatusCode,
+    value: &serde_json::Value,
+    retry_after_ms: Option<u64>,
+) -> Response<Body> {
     let bytes = serde_json::to_vec(value).unwrap_or_else(|_| b"{}".to_vec());
     let mut builder = Response::builder()
         .status(status)
@@ -293,11 +298,8 @@ async fn handle(
                     ));
                 }
             };
-            let _caller = agent_s2::adapters::authenticate(
-                &raw_identity,
-                &class,
-                &guard.config.instance,
-            );
+            let _caller =
+                agent_s2::adapters::authenticate(&raw_identity, &class, &guard.config.instance);
             let _ = raw;
             // Serving needs the bundle's suite, priors and closures, which a host
             // assembles when it activates a bundle. A host with nothing activated
@@ -349,8 +351,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("agent-s2: {route}");
     }
 
-    let registry_root = std::env::var("AGENT_S2_REGISTRY")
-        .unwrap_or_else(|_| "registry".to_owned());
+    let registry_root =
+        std::env::var("AGENT_S2_REGISTRY").unwrap_or_else(|_| "registry".to_owned());
     let feed_interval = std::time::Duration::from_millis(config.feed_interval_ms);
     let service = Arc::new(Mutex::new(Service {
         config,

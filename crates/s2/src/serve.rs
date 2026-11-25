@@ -161,12 +161,8 @@ impl Front<'_> {
         if candidates.is_empty() {
             return self.refuse(request, "the bundle offers no front member");
         }
-        let descriptor = agent_router::describe::describe(
-            &request.input,
-            1,
-            self.encoder,
-            &self.priors.encoder,
-        );
+        let descriptor =
+            agent_router::describe::describe(&request.input, 1, self.encoder, &self.priors.encoder);
         let planned = agent_router::plan::plan(
             &request.request_id,
             &request.input,
@@ -641,7 +637,10 @@ mod tests {
         let mut table = Table::new();
         let config = Config {
             trust_roots: world.roots.clone(),
-            ..base_config(Profile::Dev, agent_contracts::driver::IsolationLevel::Process)
+            ..base_config(
+                Profile::Dev,
+                agent_contracts::driver::IsolationLevel::Process,
+            )
         };
         table
             .reconcile(
@@ -935,7 +934,11 @@ mod tests {
             runs: vec![],
         };
         for i in 0..25 {
-            front(&mut w, quiet(), false).serve(&request(&format!("r-{i}"), None), &mut runner, 1_000);
+            front(&mut w, quiet(), false).serve(
+                &request(&format!("r-{i}"), None),
+                &mut runner,
+                1_000,
+            );
         }
         let records = w.windows.flush();
         assert!(!records.is_empty());
@@ -966,7 +969,12 @@ mod tests {
                 defs: &w.defs,
                 load: quiet(),
             };
-            cohort.pass("t0", &serde_json::json!({"q": "x"}), &evaluation, &mut runner)
+            cohort.pass(
+                "t0",
+                &serde_json::json!({"q": "x"}),
+                &evaluation,
+                &mut runner,
+            )
         };
         assert_eq!(pass.ran, 1);
         assert!(pass.broken.is_empty());
@@ -991,7 +999,12 @@ mod tests {
                 defs: &w.defs,
                 load: pressed,
             };
-            cohort.pass("t1", &serde_json::json!({"q": "x"}), &evaluation, &mut runner)
+            cohort.pass(
+                "t1",
+                &serde_json::json!({"q": "x"}),
+                &evaluation,
+                &mut runner,
+            )
         };
         assert_eq!(pass.deferred, 1);
         assert_eq!(pass.ran, 0);
@@ -1016,7 +1029,12 @@ mod tests {
                 defs: &w.defs,
                 load: quiet(),
             };
-            cohort.pass("t0", &serde_json::json!({}), &HashId::from_sha256([3; 32]), &mut runner)
+            cohort.pass(
+                "t0",
+                &serde_json::json!({}),
+                &HashId::from_sha256([3; 32]),
+                &mut runner,
+            )
         };
         assert_eq!(pass.broken, vec![member]);
         assert_eq!(pass.ran, 0);

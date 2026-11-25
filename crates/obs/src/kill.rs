@@ -91,9 +91,7 @@ pub fn halt(
     next_entry: u64,
     now: Timestamp,
 ) -> Halt {
-    let revocation_scope = scope
-        .as_revocation()
-        .unwrap_or(RevocationScope::All);
+    let revocation_scope = scope.as_revocation().unwrap_or(RevocationScope::All);
     let entry = scope.as_revocation().map(|scope| Revocation {
         entry: next_entry,
         scope,
@@ -167,7 +165,12 @@ impl Trigger {
 }
 
 /// What the policy proposes for a trigger, if anything.
-pub fn automatic(trigger: &Trigger, scope: &Scope, next_entry: u64, now: Timestamp) -> Option<Halt> {
+pub fn automatic(
+    trigger: &Trigger,
+    scope: &Scope,
+    next_entry: u64,
+    now: Timestamp,
+) -> Option<Halt> {
     let mode = trigger.mode()?;
     Some(halt(
         scope,
@@ -395,7 +398,12 @@ mod tests {
             issued_at: 1_000,
             effective: RevocationEffect::Immediate,
         };
-        let built = feed(vec![entry(3), entry(1), entry(3), entry(2)], 9, 1_000, signature());
+        let built = feed(
+            vec![entry(3), entry(1), entry(3), entry(2)],
+            9,
+            1_000,
+            signature(),
+        );
         assert_eq!(
             built.entries.iter().map(|e| e.entry).collect::<Vec<u64>>(),
             vec![1, 2, 3]

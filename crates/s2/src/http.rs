@@ -146,7 +146,11 @@ impl Health {
             .deployments
             .values()
             .any(|state| state == "active" || state == "canary");
-        if serving && !self.feed_stale { 200 } else { 503 }
+        if serving && !self.feed_stale {
+            200
+        } else {
+            503
+        }
     }
 }
 
@@ -372,7 +376,11 @@ mod tests {
         assert!(health.body()["degraded_reason"].is_string());
 
         health.feed_stale = true;
-        assert_eq!(health.status(), 503, "a stale instance should not be sent traffic");
+        assert_eq!(
+            health.status(),
+            503,
+            "a stale instance should not be sent traffic"
+        );
         health.feed_stale = false;
         health
             .deployments
@@ -452,10 +460,7 @@ mod tests {
             identify(&oidc, Auth::Oidc, &BTreeMap::new()).unwrap().0,
             "ada"
         );
-        let mtls = BTreeMap::from([(
-            "x-client-cert-subject".to_owned(),
-            "CN=ada".to_owned(),
-        )]);
+        let mtls = BTreeMap::from([("x-client-cert-subject".to_owned(), "CN=ada".to_owned())]);
         assert_eq!(
             identify(&mtls, Auth::Mtls, &BTreeMap::new()).unwrap().0,
             "CN=ada"
@@ -465,7 +470,10 @@ mod tests {
 
     #[test]
     fn the_advertised_surface_lists_every_function_on_every_protocol() {
-        let config = base_config(Profile::Dev, agent_contracts::driver::IsolationLevel::Process);
+        let config = base_config(
+            Profile::Dev,
+            agent_contracts::driver::IsolationLevel::Process,
+        );
         let routes = advertised(&config, &functions());
         assert!(routes.contains(&"GET /healthz".to_owned()));
         for protocol in ProtocolName::ALL {

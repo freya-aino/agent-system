@@ -31,7 +31,7 @@ use agent_contracts::events::{DeploymentFailed, DeploymentVerified, RolloutTrigg
 use agent_contracts::types::{DeployState, HashId, Name, Timestamp};
 use agent_library::registry::Resolver;
 use agent_promotion::sign::SignatureVerifier;
-use agent_promotion::verify::{VerifyContext, Verified};
+use agent_promotion::verify::{Verified, VerifyContext};
 
 use crate::config::Config;
 use crate::error::S2Error;
@@ -242,7 +242,9 @@ impl Table {
         self.stale = applied.stale;
         let revocations: Vec<Revocation> = feed.entries.clone();
 
-        let roots = source.trust_roots().unwrap_or_else(|_| config.trust_roots.clone());
+        let roots = source
+            .trust_roots()
+            .unwrap_or_else(|_| config.trust_roots.clone());
         let bundles = source.bundles()?;
 
         // Group by release set: a set verifies all or nothing.
@@ -702,14 +704,10 @@ pub(crate) mod tests {
         let class = ChangeClass::LineageInternal;
         let results = agent_promotion::build::tests_support::passing_results(&policy, class);
         let decisions = agent_promotion::build::tests_support::approvals(&policy, class);
-        let metric = agent_metrics::def::metric_ref(&agent_metrics::def::completion_rate()).unwrap();
+        let metric =
+            agent_metrics::def::metric_ref(&agent_metrics::def::completion_rate()).unwrap();
         let request = agent_promotion::build::tests_support::request(
-            &built,
-            &policy,
-            class,
-            &results,
-            &decisions,
-            metric,
+            &built, &policy, class, &results, &decisions, metric,
         );
         let manifest = agent_promotion::build::build(&request, &policy, &built.registry)
             .expect("the bundle builds");
@@ -797,7 +795,13 @@ pub(crate) mod tests {
         let config = with_roots(&world);
         let mut table = Table::new();
         table
-            .reconcile(&source(&world), &config, &DevVerifier, &world.registry, 1_000)
+            .reconcile(
+                &source(&world),
+                &config,
+                &DevVerifier,
+                &world.registry,
+                1_000,
+            )
             .unwrap();
         // Promote it to active by policy, so there is something to protect.
         let policy = DeploymentPolicy {
@@ -832,7 +836,13 @@ pub(crate) mod tests {
         table
             .apply_policy(&policy, &config, &Always, &bytes, 1_000)
             .unwrap();
-        assert!(table.get(&world.bundle.manifest.root).unwrap().state.serves());
+        assert!(
+            table
+                .get(&world.bundle.manifest.root)
+                .unwrap()
+                .state
+                .serves()
+        );
 
         // Now a tampered bundle arrives.
         let mut broken = source(&world);
@@ -890,7 +900,13 @@ pub(crate) mod tests {
         let config = with_roots(&world);
         let mut table = Table::new();
         table
-            .reconcile(&source(&world), &config, &DevVerifier, &world.registry, 1_000)
+            .reconcile(
+                &source(&world),
+                &config,
+                &DevVerifier,
+                &world.registry,
+                1_000,
+            )
             .unwrap();
         struct Always;
         impl SignatureVerifier for Always {
@@ -1000,7 +1016,13 @@ pub(crate) mod tests {
         config.pinned_roots = vec![HashId::from_sha256([0x99; 32])];
         let mut table = Table::new();
         table
-            .reconcile(&source(&world), &config, &DevVerifier, &world.registry, 1_000)
+            .reconcile(
+                &source(&world),
+                &config,
+                &DevVerifier,
+                &world.registry,
+                1_000,
+            )
             .unwrap();
         let row = table.get(&world.bundle.manifest.root).unwrap();
         assert_eq!(
@@ -1045,14 +1067,15 @@ pub(crate) mod tests {
         let mut table = Table::new();
         let mut source = source(&world);
         let candidate = HashId::from_sha256([0x33; 32]);
-        source.bundles[0].manifest.members.push(
-            agent_contracts::bundle::BundleMember {
+        source.bundles[0]
+            .manifest
+            .members
+            .push(agent_contracts::bundle::BundleMember {
                 unit: candidate.clone(),
                 exposure: Exposure::Internal,
                 share: None,
                 evaluation: Some(HashId::from_sha256([0x34; 32])),
-            },
-        );
+            });
         // Re-sign, because the manifest changed.
         let policy = agent_promotion::policy::GatePolicy::default();
         let signer = DevSigner::new(
@@ -1094,7 +1117,13 @@ pub(crate) mod tests {
         let config = with_roots(&world);
         let mut table = Table::new();
         table
-            .reconcile(&source(&world), &config, &DevVerifier, &world.registry, 1_000)
+            .reconcile(
+                &source(&world),
+                &config,
+                &DevVerifier,
+                &world.registry,
+                1_000,
+            )
             .unwrap();
         let root = world.bundle.manifest.root.clone();
         for attempt in 1..FAILURES_TO_BREAK {
@@ -1110,7 +1139,13 @@ pub(crate) mod tests {
         // The counter counts *consecutive* failures.
         let mut table = Table::new();
         table
-            .reconcile(&source(&world), &config, &DevVerifier, &world.registry, 1_000)
+            .reconcile(
+                &source(&world),
+                &config,
+                &DevVerifier,
+                &world.registry,
+                1_000,
+            )
             .unwrap();
         table.instance_failed(&root, 1_000);
         table.instance_succeeded(&root);
@@ -1127,7 +1162,13 @@ pub(crate) mod tests {
         let config = with_roots(&world);
         let mut table = Table::new();
         table
-            .reconcile(&source(&world), &config, &DevVerifier, &world.registry, 1_000)
+            .reconcile(
+                &source(&world),
+                &config,
+                &DevVerifier,
+                &world.registry,
+                1_000,
+            )
             .unwrap();
         let root = world.bundle.manifest.root.clone();
         assert_eq!(
@@ -1160,7 +1201,13 @@ pub(crate) mod tests {
         let config = with_roots(&world);
         let mut table = Table::new();
         table
-            .reconcile(&source(&world), &config, &DevVerifier, &world.registry, 1_000)
+            .reconcile(
+                &source(&world),
+                &config,
+                &DevVerifier,
+                &world.registry,
+                1_000,
+            )
             .unwrap();
         let root = world.bundle.manifest.root.clone();
         // Nothing serves in shadow.
@@ -1183,7 +1230,13 @@ pub(crate) mod tests {
         let config = with_roots(&world);
         let mut table = Table::new();
         table
-            .reconcile(&source(&world), &config, &DevVerifier, &world.registry, 1_000)
+            .reconcile(
+                &source(&world),
+                &config,
+                &DevVerifier,
+                &world.registry,
+                1_000,
+            )
             .unwrap();
         let root = world.bundle.manifest.root.clone();
         if let Some(row) = table.rows.get_mut(&root) {

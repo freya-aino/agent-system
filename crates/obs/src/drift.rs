@@ -25,7 +25,9 @@
 
 use std::collections::BTreeMap;
 
-use agent_contracts::events::{DriftDetected, DriftScope, DriftSignalKind, DriftStat, DriftTestKind};
+use agent_contracts::events::{
+    DriftDetected, DriftScope, DriftSignalKind, DriftStat, DriftTestKind,
+};
 use agent_contracts::metric::AlertSeverity;
 use agent_contracts::telemetry::{LiveFitness, SpanCf, Window};
 use agent_contracts::types::{HashId, Name};
@@ -91,9 +93,7 @@ impl DriftState {
         record_identity: bool,
     ) {
         for span in spans {
-            if record_identity
-                && let Some(meta) = &span.provider_meta
-            {
+            if record_identity && let Some(meta) = &span.provider_meta {
                 if let Some(snapshot) = &meta.snapshot {
                     *self.snapshots.entry(snapshot.clone()).or_insert(0) += 1;
                 }
@@ -321,8 +321,8 @@ pub fn detect(
             continue;
         }
         let baseline_mean = baseline.iter().sum::<f64>() / baseline.len() as f64;
-        let shift = (live.distribution.mean - baseline_mean).abs()
-            / baseline_mean.abs().max(f64::EPSILON);
+        let shift =
+            (live.distribution.mean - baseline_mean).abs() / baseline_mean.abs().max(f64::EPSILON);
         if shift > 0.1 {
             signalled.insert(name.clone());
             let severity = escalate(state, &name);
@@ -344,9 +344,7 @@ pub fn detect(
 
     // The window joins the baseline *after* it has been tested against it, and
     // only for the series it did not drift on.
-    let identity_drifted = events
-        .iter()
-        .any(|e| e.signal == DriftSignalKind::Identity);
+    let identity_drifted = events.iter().any(|e| e.signal == DriftSignalKind::Identity);
     state.observe_filtered(spans, &signalled, !identity_drifted);
     for live in fitness {
         let name = format!("behaviour/{}", live.metric);

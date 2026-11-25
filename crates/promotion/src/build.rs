@@ -509,7 +509,8 @@ pub mod tests_support {
         };
         let node_hash = registry.put_unit(node).expect("a valid Node");
 
-        let mut root = crate::policy::tests_support::unit(Role::None, vec![function("answer", 1, 2)]);
+        let mut root =
+            crate::policy::tests_support::unit(Role::None, vec![function("answer", 1, 2)]);
         root.hash = None;
         root.members = BTreeMap::from([(
             "s0".to_owned(),
