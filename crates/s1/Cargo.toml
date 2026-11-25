@@ -33,3 +33,7 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net"
 [dev-dependencies]
 agent-testkit.workspace = true
 proptest.workspace = true
+
+[[bin]]
+name = "agent-s1"
+path = "src/bin/s1.rs"

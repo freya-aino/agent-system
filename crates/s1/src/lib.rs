@@ -51,14 +51,25 @@
 //! same logic run over SQLite in the single-binary profile and Postgres in a real
 //! deployment, and what keeps the tests free of a database.
 
+pub mod api;
+pub mod assets;
 pub mod auth;
 pub mod budget;
 pub mod config;
 pub mod error;
 pub mod experiments;
 pub mod killswitch;
+pub mod plugins;
+pub mod policy;
+pub mod promotions;
 pub mod queue;
+pub mod readmodel;
+pub mod service;
 pub mod shards;
+pub mod sign;
+pub mod telemetry;
+pub mod tests_support;
+pub mod writer;
 
 pub use config::{Config, Profile};
 pub use error::{Result, S1Error};
