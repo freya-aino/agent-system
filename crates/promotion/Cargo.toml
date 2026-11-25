@@ -1,0 +1,21 @@
+[package]
+name = "agent-promotion"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "C9: the only path from inbound to outbound — gates, approvals, the deterministic bundle build, signing, publication and the export policy."
+
+[dependencies]
+agent-contracts.workspace = true
+agent-core.workspace = true
+agent-library.workspace = true
+agent-metrics.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

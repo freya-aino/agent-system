@@ -11,6 +11,8 @@ members = [
     "crates/meta-optimizer",
     "crates/swarm",
     "crates/optimizer",
+    "crates/promotion",
+    "crates/router",
     "crates/testkit",
 ]
 
@@ -27,9 +29,11 @@ agent-core = { path = "crates/core" }
 agent-library = { path = "crates/library" }
 agent-meta-optimizer = { path = "crates/meta-optimizer" }
 agent-metrics = { path = "crates/metrics" }
+agent-promotion = { path = "crates/promotion" }
 agent-optimizer = { path = "crates/optimizer" }
 agent-swarm = { path = "crates/swarm" }
 agent-testkit = { path = "crates/testkit" }
+agent-router = { path = "crates/router" }
 agent-runtime = { path = "crates/runtime" }
 agent-store = { path = "crates/store" }
 

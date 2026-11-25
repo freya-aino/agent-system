@@ -53,7 +53,8 @@ Event { id: EventId, shard: ShardId, seq: int, prev: HashId, ts: Timestamp, acto
 
 ```
 Outcome { kind: ok | compile_error | operator_error | node_fail | run_error | limit_exhausted
-                | budget_exhausted | eliminated_early | infra_error | preempted,
+                | budget_exhausted | eliminated_early | infra_error | preempted
+                | gate_failed | demoted,
           stage: compile | node | agent | swarm,
           unit: HashId, parents: [HashId], operator: string, evaluation: HashId?, result: FitnessRecord?,
           detail_ref: BlobRef?, cost: Budget }
@@ -61,3 +62,8 @@ Outcome { kind: ok | compile_error | operator_error | node_fail | run_error | li
 Infra failures and preemptions are recorded but never counted against a candidate's fitness — the first says
 nothing about the candidate, the second only that the live system was busy (C2). Selection never deletes; it appends
 events.
+
+`gate_failed` and `demoted` are C9's (a failed promotion gate, and a bundle taken out of service). Both **do**
+count against fitness, and both propagate to the candidate's lineage subtree, so the optimiser that proposed it
+absorbs the result instead of proposing it again. A demotion caused by a kill switch or a revocation is
+`infra_error` rather than `demoted`: it says nothing about the candidate.

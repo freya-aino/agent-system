@@ -315,6 +315,12 @@ pub enum OutcomeKind {
     InfraError,
     /// An internal evaluation run stopped so a client would not wait (C2, C11).
     Preempted,
+    /// A promotion gate refused the candidate (C9).
+    GateFailed,
+    /// A deployed bundle was taken out of service (C9). Propagates to the
+    /// candidate's lineage subtree, so the optimiser that proposed it absorbs the
+    /// result rather than proposing it again.
+    Demoted,
 }
 
 impl OutcomeKind {
