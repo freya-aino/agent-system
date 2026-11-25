@@ -8,8 +8,10 @@ members = [
     "crates/store",
     "crates/metrics",
     "crates/archive",
+    "crates/meta-optimizer",
     "crates/swarm",
     "crates/optimizer",
+    "crates/testkit",
 ]
 
 [workspace.package]
@@ -23,9 +25,11 @@ agent-archive = { path = "crates/archive" }
 agent-contracts = { path = "crates/contracts" }
 agent-core = { path = "crates/core" }
 agent-library = { path = "crates/library" }
+agent-meta-optimizer = { path = "crates/meta-optimizer" }
 agent-metrics = { path = "crates/metrics" }
 agent-optimizer = { path = "crates/optimizer" }
 agent-swarm = { path = "crates/swarm" }
+agent-testkit = { path = "crates/testkit" }
 agent-runtime = { path = "crates/runtime" }
 agent-store = { path = "crates/store" }
 

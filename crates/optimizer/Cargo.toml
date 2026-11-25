@@ -19,3 +19,4 @@ thiserror.workspace = true
 [dev-dependencies]
 agent-runtime.workspace = true
 agent-swarm.workspace = true
+agent-testkit.workspace = true

@@ -439,6 +439,99 @@ pub fn obrien_fleming(alpha: f64, fraction: f64) -> f64 {
     spent.clamp(0.0, alpha)
 }
 
+// ---------------------------------------------------------------------------
+// MCMC diagnostics
+// ---------------------------------------------------------------------------
+
+/// Split-R-hat over several chains of one scalar summary (Gelman–Rubin, with the
+/// split-half refinement).
+///
+/// Each chain is split in two, so a chain that is drifting within itself registers
+/// as between-chain variance rather than hiding inside the within-chain term. A
+/// value near 1 means the chains agree about the distribution; the usual threshold
+/// is 1.01, and C7 reads it as **necessary and not sufficient** — on a discrete
+/// structured space "converged" is only ever relative to the operator graph.
+///
+/// `Err` when there are fewer than two chains or any chain is shorter than four
+/// draws: with less than that the statistic exists but says nothing.
+pub fn r_hat(chains: &[Vec<f64>]) -> Result<f64, Diagnostic> {
+    if chains.len() < 2 {
+        return Err(bad("chains", "R-hat needs at least two chains"));
+    }
+    let mut halves: Vec<&[f64]> = Vec::with_capacity(chains.len() * 2);
+    for chain in chains {
+        if chain.len() < 4 {
+            return Err(bad("chains", "R-hat needs at least four draws per chain"));
+        }
+        check_finite(chain, "chains")?;
+        let mid = chain.len() / 2;
+        halves.push(&chain[..mid]);
+        halves.push(&chain[mid..]);
+    }
+    // Ragged halves are allowed; the shortest decides n, so every sequence
+    // contributes the same number of draws.
+    let n = halves.iter().map(|h| h.len()).min().unwrap_or(0);
+    if n < 2 {
+        return Err(bad("chains", "R-hat needs at least two draws per half"));
+    }
+    let m = halves.len() as f64;
+    let means: Vec<f64> = halves
+        .iter()
+        .map(|h| h[..n].iter().sum::<f64>() / n as f64)
+        .collect();
+    let grand = means.iter().sum::<f64>() / m;
+    let between = n as f64 / (m - 1.0) * means.iter().map(|mu| (mu - grand).powi(2)).sum::<f64>();
+    let within = halves
+        .iter()
+        .zip(&means)
+        .map(|(h, mu)| h[..n].iter().map(|v| (v - mu).powi(2)).sum::<f64>() / (n as f64 - 1.0))
+        .sum::<f64>()
+        / m;
+    if within <= 0.0 {
+        // Every chain is constant. If they agree, that is convergence; if they
+        // disagree, the between-chain term is all there is and R-hat is infinite.
+        return Ok(if between <= 0.0 { 1.0 } else { f64::INFINITY });
+    }
+    let var_plus = (n as f64 - 1.0) / n as f64 * within + between / n as f64;
+    Ok((var_plus / within).sqrt())
+}
+
+/// Effective sample size of one chain, from its autocorrelation.
+///
+/// `ESS = n / (1 + 2 Σ ρ_k)`, summing the autocorrelations until the first negative
+/// one (Geyer's initial positive sequence), which is the standard truncation and
+/// stops the sum running away on noise. A perfectly independent chain gets `n`; a
+/// sticky one — which is what a high-variance pseudo-marginal estimator produces —
+/// gets much less, and that gap is the diagnostic.
+pub fn ess(chain: &[f64]) -> Result<f64, Diagnostic> {
+    if chain.len() < 4 {
+        return Err(bad("chain", "ESS needs at least four draws"));
+    }
+    check_finite(chain, "chain")?;
+    let n = chain.len();
+    let mean = chain.iter().sum::<f64>() / n as f64;
+    let var = chain.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n as f64;
+    if var <= 0.0 {
+        // A constant chain carries one draw's worth of information, not n.
+        return Ok(1.0);
+    }
+    let mut sum = 0.0;
+    for lag in 1..n {
+        let cov = chain[..n - lag]
+            .iter()
+            .zip(&chain[lag..])
+            .map(|(a, b)| (a - mean) * (b - mean))
+            .sum::<f64>()
+            / n as f64;
+        let rho = cov / var;
+        if rho < 0.0 {
+            break;
+        }
+        sum += rho;
+    }
+    Ok((n as f64 / (1.0 + 2.0 * sum)).clamp(1.0, n as f64))
+}
+
 /// Holm step-down; reject flags in input order. NaN p-values never reject.
 pub fn holm(pvalues: &[f64], alpha: f64) -> Vec<bool> {
     let m = pvalues.len();
@@ -1082,5 +1175,93 @@ mod spending_tests {
         assert!(obrien_fleming(alpha, -1.0) >= 0.0);
         assert!(obrien_fleming(alpha, 0.5) <= alpha);
         assert_eq!(obrien_fleming(0.0, 0.5), 0.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // MCMC diagnostics
+    // -----------------------------------------------------------------------
+
+    /// Four chains drawn from the same distribution with different seeds.
+    fn independent_chains(n: usize, shift: f64) -> Vec<Vec<f64>> {
+        (0..4u64)
+            .map(|c| {
+                let mut r = crate::rng::rng(crate::rng::derive(c, "chain"));
+                (0..n)
+                    .map(|_| {
+                        // A crude uniform in [0, 1), plus a per-chain shift.
+                        crate::rng::index(&mut r, 1 << 20) as f64 / f64::from(1u32 << 20)
+                            + shift * c as f64
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn r_hat_is_near_one_for_agreeing_chains_and_large_for_disagreeing_ones() {
+        let agreeing = independent_chains(400, 0.0);
+        let converged = r_hat(&agreeing).unwrap();
+        assert!(
+            converged < 1.05,
+            "chains from the same distribution should agree: {converged}"
+        );
+
+        let disagreeing = independent_chains(400, 5.0);
+        let diverged = r_hat(&disagreeing).unwrap();
+        assert!(
+            diverged > 1.5,
+            "chains sitting in different places should not: {diverged}"
+        );
+    }
+
+    #[test]
+    fn r_hat_sees_a_chain_that_drifts_within_itself() {
+        // Two chains that each climb steadily: their halves disagree, which is
+        // exactly what the split refinement is for.
+        let drifting: Vec<Vec<f64>> = (0..2)
+            .map(|c| (0..200).map(|i| i as f64 + c as f64 * 0.1).collect())
+            .collect();
+        assert!(r_hat(&drifting).unwrap() > 1.1);
+    }
+
+    #[test]
+    fn r_hat_refuses_what_it_cannot_say_anything_about() {
+        assert!(r_hat(&[vec![1.0, 2.0, 3.0, 4.0]]).is_err(), "one chain");
+        assert!(
+            r_hat(&[vec![1.0, 2.0], vec![3.0, 4.0]]).is_err(),
+            "too few draws"
+        );
+        // Identical constant chains are convergence, not a division by zero.
+        let constant = vec![vec![1.0; 10], vec![1.0; 10]];
+        assert_eq!(r_hat(&constant).unwrap(), 1.0);
+        let split = vec![vec![1.0; 10], vec![2.0; 10]];
+        assert!(r_hat(&split).unwrap().is_infinite());
+    }
+
+    #[test]
+    fn ess_is_near_n_for_independent_draws_and_far_below_for_a_sticky_chain() {
+        let independent = &independent_chains(500, 0.0)[0];
+        let free = ess(independent).unwrap();
+        assert!(free > 250.0, "independent draws: {free} of 500");
+
+        // A sticky chain: every value repeated ten times, as a high-variance
+        // pseudo-marginal estimator produces.
+        let sticky: Vec<f64> = independent
+            .iter()
+            .take(50)
+            .flat_map(|v| std::iter::repeat_n(*v, 10))
+            .collect();
+        let stuck = ess(&sticky).unwrap();
+        assert!(
+            stuck < free / 2.0,
+            "a chain that repeats itself carries less information: {stuck}"
+        );
+        assert!(stuck >= 1.0);
+    }
+
+    #[test]
+    fn a_constant_chain_carries_one_draws_worth_of_information() {
+        assert_eq!(ess(&[3.0; 100]).unwrap(), 1.0);
+        assert!(ess(&[1.0, 2.0]).is_err());
     }
 }

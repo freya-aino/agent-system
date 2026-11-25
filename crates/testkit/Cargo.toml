@@ -1,0 +1,19 @@
+[package]
+name = "agent-testkit"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The shared integration fixture for the milestone tests: a real Swarm over the fake provider, with suites, an Evaluator and the loop wired up. Dev-dependency only."
+
+[dependencies]
+agent-contracts.workspace = true
+agent-core.workspace = true
+agent-library.workspace = true
+agent-metrics.workspace = true
+agent-optimizer.workspace = true
+agent-runtime.workspace = true
+agent-swarm.workspace = true
+serde.workspace = true
+serde_json.workspace = true

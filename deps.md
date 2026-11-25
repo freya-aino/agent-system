@@ -76,5 +76,13 @@ that transport should become one, and Qdrant was the third. The in-process
 exact-search `VectorIndex` needs nothing at all, which is what keeps the
 single-binary profile free of external services.
 
+**Activated by C7 (2026-11-25), none new.** The meta-optimizer is pure and
+synchronous like C3 and C5; R-hat and ESS went into C0 beside the rest of the
+statistics rather than into C7, so S1's diagnostics and a dashboard's cannot drift
+apart on what "converged" means. `agent-testkit` is a dev-dependency crate holding
+the shared integration fixture (a real Swarm over the fake provider, the suites and
+the loop); it pulls no external crate of its own and is never compiled into a
+binary.
+
 Headroom: 6. Likely first additions if needed: a compression crate for blobs, and a regex crate if the
 hand-written anchored matcher in the guard DSL and `Subsumes` proves insufficient.
