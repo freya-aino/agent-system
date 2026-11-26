@@ -220,6 +220,14 @@ impl Promotions {
                         .map(|result| result.evidence.clone())
                         .collect::<Vec<_>>(),
                 }),
+                // The same hashes as the event's own `evidence`, which is what C4
+                // indexes and what makes "why was this promoted" a read of the log
+                // rather than a search through event payloads.
+                evidence: entry
+                    .results()
+                    .iter()
+                    .flat_map(|result| result.evidence.iter().cloned())
+                    .collect(),
             },
             build,
             blocked_by: explanation.blocked_by,

@@ -169,16 +169,20 @@ dependencies = [
 name = "agent-s1"
 version = "0.1.0"
 dependencies = [
+ "agent-archive",
  "agent-contracts",
  "agent-core",
  "agent-library",
+ "agent-meta-optimizer",
  "agent-metrics",
  "agent-obs",
+ "agent-optimizer",
  "agent-promotion",
  "agent-router",
  "agent-runtime",
  "agent-s2",
  "agent-store",
+ "agent-swarm",
  "agent-testkit",
  "bytes",
  "http-body-util",
@@ -188,6 +192,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "thiserror",
  "tokio",
  "toml",
@@ -199,6 +204,7 @@ version = "0.1.0"
 dependencies = [
  "agent-contracts",
  "agent-core",
+ "agent-driver-fc",
  "agent-library",
  "agent-metrics",
  "agent-obs",
@@ -226,10 +232,14 @@ dependencies = [
  "agent-contracts",
  "agent-core",
  "agent-library",
+ "agent-metrics",
+ "agent-store",
  "proptest",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

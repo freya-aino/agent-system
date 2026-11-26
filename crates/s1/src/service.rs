@@ -14,7 +14,7 @@
 use std::collections::BTreeMap;
 
 use agent_contracts::bundle::DeploymentPolicy;
-use agent_contracts::trace_event::Actor;
+use agent_contracts::trace_event::{Actor, Event};
 use agent_contracts::types::{HashId, JobKind, Timestamp};
 use agent_obs::sink::Draft;
 use serde_json::{Value, json};
@@ -95,6 +95,35 @@ impl Identities {
     }
 }
 
+/// The submitted experiment, with the jobs it queued.
+///
+/// The experiment's own fields stay at the top level and `queued` is **added**: a
+/// caller that read `id` before still reads it, so making the route do its job did
+/// not change what the route says.
+fn created_with_jobs(
+    experiment: &crate::experiments::Experiment,
+    queued: Vec<String>,
+    refused: Option<S1Error>,
+) -> ApiResponse {
+    let mut body = json!(experiment);
+    if let Value::Object(map) = &mut body {
+        map.insert("queued".to_owned(), json!(queued));
+        if let Some(error) = refused {
+            // The experiment exists and is visible; the queue refusing is a separate
+            // fact, said here rather than by failing the submission and losing it.
+            map.insert("not_queued".to_owned(), json!(error.to_string()));
+        }
+    }
+    ApiResponse::created(body)
+}
+
+/// Replicates queued when an experiment is submitted.
+///
+/// Three, which is `SeedPolicy`'s floor: one run is not a measurement, and the
+/// paired comparison every decision rests on needs replicates to pair. The
+/// Optimizer asks for more when racing says it needs them.
+pub const INITIAL_REPLICATES: u64 = 3;
+
 /// The service state.
 pub struct Service {
     pub config: Config,
@@ -120,6 +149,25 @@ pub struct Service {
     /// Events the writer should append. Drained by the writer loop, because an API
     /// handler is not a writer.
     pub outbox: Vec<Draft>,
+    /// Rolling drift state per (connection, model) key.
+    ///
+    /// C12 detects drift from a window of spans and fitness, and the telemetry sink
+    /// is where both arrive — so detection belongs here. Keyed, because a baseline
+    /// is per pinned model: one that pooled two models would call a switch between
+    /// them "drift".
+    pub drift: BTreeMap<agent_obs::drift::Key, agent_obs::drift::DriftState>,
+    /// Where telemetry is exported, if anywhere.
+    ///
+    /// `None` is off, and off is the absence of a sink rather than a flag: there is
+    /// no code path that exports without one.
+    pub otel: Option<Box<dyn crate::wiring::OtelSink>>,
+    /// The gate policy promotions are judged against, and the Optimizer's standing.
+    ///
+    /// Both are folds of the log, loaded by the writer and set here, because a
+    /// handler cannot read the store. `approve` and `reject` needed exactly these
+    /// two and had neither, which is why they returned 503.
+    pub gate_policy: agent_promotion::policy::GatePolicy,
+    pub optimizer_standing: agent_promotion::approval::OptimizerStanding,
 }
 
 impl Service {
@@ -146,6 +194,16 @@ impl Service {
             policy_adoption: BTreeMap::new(),
             applied: BTreeMap::new(),
             outbox: vec![],
+            drift: BTreeMap::new(),
+            otel: None,
+            // C9's own defaults until the log says otherwise: margin 0.02,
+            // stability 3x3, four-eyes on schema changes. A gate policy that was
+            // absent rather than default would pass everything.
+            gate_policy: agent_promotion::policy::GatePolicy::default(),
+            // Empty: the Optimizer has earned nothing until the log shows it has,
+            // so every class needs a human until then. That is the right direction
+            // to be wrong in.
+            optimizer_standing: agent_promotion::approval::OptimizerStanding::default(),
         }
     }
 
@@ -241,21 +299,7 @@ impl Service {
             }))),
             Route::SetBudget(id) => self.set_budget(id, body),
 
-            Route::ListPromotions => Ok(ApiResponse::ok(json!({
-                "pending": self
-                    .promotions
-                    .pending()
-                    .iter()
-                    .map(|entry| json!({
-                        "proposal": entry.proposal.id,
-                        "candidate": entry.proposal.candidate,
-                        "class": entry.proposal.class.as_str(),
-                        "inbound_gates": entry.inbound.len(),
-                        "live_gates": entry.live.len(),
-                        "decisions": entry.decisions.len(),
-                    }))
-                    .collect::<Vec<_>>(),
-            }))),
+            Route::ListPromotions => Ok(ApiResponse::ok(self.list_promotions(now))),
 
             Route::ListDeployments => Ok(ApiResponse::ok(json!({
                 "deployments": self.projections.deployments(),
@@ -340,19 +384,20 @@ impl Service {
                 "cursor": self.feed.cursor(),
                 "poll": "/events?since=<cursor>",
             }))),
-            // These need the store, which the HTTP layer holds: the handler here
-            // reports that rather than pretending to serve from the read models,
-            // because a lineage view that silently showed a projection would be a
-            // different claim than the log's.
-            Route::GetLineage(_) | Route::GetUnit(_) => Err(S1Error::Unavailable {
-                detail: "this route is served from the store by the HTTP layer".to_owned(),
+            // Served by the HTTP layer, which holds the store: these read C4's
+            // genealogy and objects, the store is async and a handler is not, and a
+            // lineage view assembled from the read models would be a different
+            // claim than the log's. `Service::admit_read` is how they are still
+            // subject to this route table's rules. Reaching here means the HTTP
+            // layer did not intercept them, which is a wiring bug rather than a
+            // condition a caller can fix.
+            Route::GetLineage(_) | Route::GetUnit(_) => Err(S1Error::Internal {
+                component: "api".to_owned(),
+                detail: "a store-served route reached the handler".to_owned(),
             }),
-            Route::DrainMember(_) => Err(S1Error::Unavailable {
-                detail: "draining is a policy change: edit the draft and issue a policy".to_owned(),
-            }),
-            Route::ApprovePromotion(_) | Route::RejectPromotion(_) => Err(S1Error::Unavailable {
-                detail: "the gate policy and the optimizer standing come from the log".to_owned(),
-            }),
+            Route::DrainMember(root) => self.drain_member(root, actor, now),
+            Route::ApprovePromotion(id) => self.decide_promotion(id, body, actor, true, now),
+            Route::RejectPromotion(id) => self.decide_promotion(id, body, actor, false, now),
             Route::Asset(_) => Err(S1Error::not_found("asset", "served by the HTTP layer")),
             Route::NotFound => Err(S1Error::not_found("route", "unknown")),
         }
@@ -404,8 +449,210 @@ impl Service {
                 scope: "experiment".to_owned(),
             });
         }
+        let max_cost = submission.max_cost;
         let experiment = self.experiments.submit(submission, now)?;
-        Ok(ApiResponse::created(json!(experiment)))
+
+        // Queue the work the experiment asks for. Until this existed the route
+        // registered an experiment and enqueued nothing, so the API accepted work
+        // that nothing would ever do — and `enqueue_job` had no caller outside the
+        // tests.
+        //
+        // One `Eval` job per replicate, on the lineage root. The replicate count is
+        // `SeedPolicy.n0`'s floor rather than a number chosen here: one run is not a
+        // measurement, and a figure with no `n` is not a result.
+        let mut queued = vec![];
+        for seed in 0..INITIAL_REPLICATES {
+            match self.enqueue_job(
+                &experiment.id,
+                experiment.lineage_root.clone(),
+                JobKind::Eval,
+                seed,
+                agent_contracts::unit::Limits {
+                    max_cost: Some(max_cost),
+                    ..agent_contracts::unit::Limits::default()
+                },
+                now,
+            ) {
+                Ok(id) => queued.push(id),
+                // The experiment exists and is visible; the queue being full or
+                // killed is a separate fact the caller can see in `/jobs`. Failing
+                // the submission here would lose the experiment too.
+                Err(error) => return Ok(created_with_jobs(&experiment, queued, Some(error))),
+            }
+        }
+        Ok(created_with_jobs(&experiment, queued, None))
+    }
+
+    /// Drain a deployment: stop sending it new traffic.
+    ///
+    /// **A draft edit, not a command.** The old handler refused with "draining is a
+    /// policy change: edit the draft and issue a policy" — which was true and left
+    /// the route unusable, routed and authorized and incapable of succeeding. It
+    /// now makes that edit. Nothing reaches a deployment until a human issues the
+    /// signed policy, which S2 then *pulls*: there is no inbound control path, and
+    /// a drain that took effect by itself would be one.
+    fn drain_member(&mut self, root: &str, actor: &Actor, now: Timestamp) -> Result<ApiResponse> {
+        let root = agent_contracts::types::HashId::parse(root)
+            .map_err(|_| S1Error::bad_request("root", "not a hash"))?;
+        // The draft, seeded from what is in force: an operator draining one member
+        // must not silently revert everything else to a default.
+        let mut draft = self.policy_draft.clone().unwrap_or_else(|| PolicyDraft {
+            deployments: self
+                .policy_in_force
+                .as_ref()
+                .map(|p| p.deployments.clone())
+                .unwrap_or_default(),
+            capacity: self
+                .policy_in_force
+                .as_ref()
+                .map(|p| p.capacity)
+                .unwrap_or_default(),
+            edited_by: None,
+            edited_at: now,
+        });
+        let member = draft
+            .deployments
+            .iter_mut()
+            .find(|d| d.root == root)
+            .ok_or_else(|| S1Error::not_found("deployment", root.as_str()))?;
+        member.state = agent_contracts::types::DeployState::Draining;
+        // Share zero, because `draining` and a non-zero share together would be a
+        // policy that says two things.
+        member.share = 0.0;
+        draft.edited_by = Some(actor_name(actor));
+        draft.edited_at = now;
+        let diff = crate::policy::diff(self.policy_in_force.as_ref(), &draft);
+        self.policy_draft = Some(draft);
+        Ok(ApiResponse::ok(json!({
+            "draft": self.policy_draft,
+            "diff": diff,
+            // Said plainly: the edit is local until somebody signs it.
+            "next": "issue the policy with POST /policy; S2 pulls it on its next feed interval",
+        })))
+    }
+
+    /// The promotion queue, with what a reviewer needs to decide.
+    ///
+    /// **`effect` and `blocked_by` were missing**, so the UI's effect panel and its
+    /// "blocked by" line could never render even though it asks for both: a
+    /// reviewer saw gate *counts* and nothing about what the change would do or why
+    /// it could not be built. Both come from C9's own explanation rather than being
+    /// recomputed here, so what the API says and what a build would decide cannot
+    /// disagree.
+    fn list_promotions(&self, now: Timestamp) -> Value {
+        let pending: Vec<Value> = self
+            .promotions
+            .pending()
+            .iter()
+            .map(|entry| {
+                let id = entry.proposal.id.as_str();
+                let explanation = self
+                    .promotions
+                    .explain(id, &self.gate_policy, &self.optimizer_standing, now)
+                    .ok();
+                json!({
+                    "proposal": entry.proposal.id,
+                    "candidate": entry.proposal.candidate,
+                    "class": entry.proposal.class.as_str(),
+                    "inbound_gates": entry.inbound.len(),
+                    "live_gates": entry.live.len(),
+                    "decisions": entry.decisions.len(),
+                    // Why it cannot be built yet, empty when it can.
+                    "blocked_by": explanation
+                        .as_ref()
+                        .map(|e| e.blocked_by.clone())
+                        .unwrap_or_default(),
+                    // The paired effect each required gate measured, with the `n`
+                    // it rests on: a reviewer deciding on a mean with no `n` is
+                    // deciding on nothing.
+                    "effect": explanation
+                        .as_ref()
+                        .map(|e| {
+                            e.gates
+                                .iter()
+                                .filter_map(|(gate, result)| {
+                                    result.as_ref().map(|r| {
+                                        json!({
+                                            "gate": gate.as_str(),
+                                            "result": r.result,
+                                            "statistic": r.statistic,
+                                            "threshold": r.threshold,
+                                            "n": r.n,
+                                        })
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                    "mirror_share": explanation.as_ref().map(|e| e.mirror_share),
+                })
+            })
+            .collect();
+        json!({ "pending": pending })
+    }
+
+    /// Approve or reject a promotion.
+    ///
+    /// The two things this needed and did not have are now loaded from the log by
+    /// the writer: the gate policy the proposal was judged under, and the
+    /// Optimizer's standing — which is what decides whether it may approve a class
+    /// without a human at all.
+    ///
+    /// The actor is **the caller's identity**, converted to C9's `Actor`, never a
+    /// value from the body: self-approval is refused by comparing the decider
+    /// against the proposal's provenance, and a decider a request could name would
+    /// make that check meaningless.
+    fn decide_promotion(
+        &mut self,
+        id: &str,
+        body: &Value,
+        actor: &Actor,
+        approve: bool,
+        now: Timestamp,
+    ) -> Result<ApiResponse> {
+        let decider = match actor {
+            Actor::Human(who) => agent_promotion::approval::Actor::Human(who.clone()),
+            Actor::Optimizer(who) => agent_promotion::approval::Actor::Optimizer(who.clone()),
+            // A service or system identity is neither: approval is a decision with
+            // an accountable author, and `four_eyes` is meaningless without one.
+            other => {
+                return Err(S1Error::Forbidden {
+                    detail: format!("{} cannot decide a promotion", actor_name(other)),
+                    needs: "a human or optimizer identity".to_owned(),
+                });
+            }
+        };
+        // The note the spec names, which the handler never read before.
+        let reason = body
+            .get("note")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        let decision = if approve {
+            agent_contracts::events::Decision::Approve
+        } else {
+            agent_contracts::events::Decision::Reject
+        };
+        let incorporated = self.promotions.decide(
+            id,
+            &decider,
+            decision,
+            &reason,
+            &self.gate_policy,
+            &self.optimizer_standing,
+            now,
+        )?;
+        let build = incorporated.build;
+        let blocked_by = incorporated.blocked_by.clone();
+        self.outbox.push(incorporated.event);
+        Ok(ApiResponse::ok(json!({
+            "proposal": id,
+            "decision": if approve { "approved" } else { "rejected" },
+            // Whether a build was requested, and if not, what is still missing.
+            // An approval that silently did nothing would be the worst of both.
+            "build_requested": build,
+            "blocked_by": blocked_by,
+        })))
     }
 
     fn set_budget(&mut self, id: &str, body: &Value) -> Result<ApiResponse> {
@@ -494,6 +741,7 @@ impl Service {
                 "change_class": class,
                 "actor": actor_name(actor),
             }),
+            evidence: vec![],
         });
         Ok(ApiResponse::ok(json!({
             "change_class": class,
@@ -539,6 +787,7 @@ impl Service {
                 "entry": engagement.entry,
                 "issued_by": engagement.engaged_by,
             }),
+            evidence: vec![],
         });
         Ok(ApiResponse::created(json!({
             "engagement": engagement,
@@ -551,6 +800,32 @@ impl Service {
         let accepted = self.sink.ingest(body, &self.instances)?;
         if let Some(envelope) = &accepted.envelope {
             self.projections.apply_envelope(envelope, now);
+            // Drift, over the window this envelope reports. C12 detects and C7
+            // reacts; this is the join, and it is the service's because the sink is
+            // where the spans and the fitness arrive.
+            let reaction = self.react_to_drift(envelope, now);
+            self.outbox.extend(reaction);
+            // Export, if this deployment exports anything. `wiring::export` is a
+            // no-op without a sink, which is how "off" is expressed — the absence
+            // of a sink rather than a flag a code path could forget.
+            //
+            // **An export failure never fails the ingest.** An S2 instance's
+            // envelope is accepted or refused on its own merits; a collector being
+            // down is not one of them, and refusing here would make external
+            // tooling able to stop telemetry reaching the store.
+            // Reborrowed through the `Box` rather than through `&mut Option<Box<_>>`,
+            // which is invariant and would tie the trait object's lifetime to this
+            // method's borrow of `self`.
+            let exported = {
+                let sink: Option<&mut dyn crate::wiring::OtelSink> =
+                    self.otel.as_mut().map(|boxed| boxed.as_mut());
+                crate::wiring::export(envelope, sink)
+            };
+            match exported {
+                Ok(Some(draft)) => self.outbox.push(draft),
+                Ok(None) => {}
+                Err(error) => eprintln!("s1: telemetry was accepted but not exported: {error}"),
+            }
         }
         self.outbox.extend(accepted.events.clone());
         Ok(ApiResponse::ok(json!(accepted.response)))
@@ -588,34 +863,153 @@ impl Service {
         Ok(self.queue.submit(job, now)?.id)
     }
 
+    /// Detect drift in one envelope's window and react to it.
+    ///
+    /// **A critical drift pauses the affected lineage and recommends nothing
+    /// wider.** An advisory one is an alert: pausing on it would stop the search
+    /// whenever a provider got slower. A critical drift with no lineage to scope to
+    /// escalates to a human, because an automatic global stop is a denial-of-service
+    /// with extra steps — so `recommend_kill` is reported and never acted on.
+    fn react_to_drift(
+        &mut self,
+        envelope: &agent_contracts::telemetry::TelemetryEnvelope,
+        now: Timestamp,
+    ) -> Vec<Draft> {
+        let mut out = vec![];
+        // One pass per (connection, model) the window mentions: a baseline is per
+        // pinned model, and pooling two would read a switch between them as drift.
+        let mut keys: BTreeMap<agent_obs::drift::Key, Vec<agent_contracts::telemetry::SpanCf>> =
+            BTreeMap::new();
+        for span in &envelope.spans {
+            let Some(meta) = &span.provider_meta else {
+                continue;
+            };
+            let key = agent_obs::drift::Key {
+                // The **reporting instance**, not a connection name: a connection is
+                // deployment configuration and a content-free span does not carry
+                // one, which is correct — telemetry says nothing about how a
+                // deployment is wired. Keying per instance and model is the finest
+                // scope the evidence supports, and pooling two models under one
+                // baseline would read a switch between them as drift.
+                connection: envelope.source.clone(),
+                model_id: meta.model_id.clone(),
+                endpoint: meta.region.clone().unwrap_or_default(),
+            };
+            keys.entry(key).or_default().push(span.clone());
+        }
+        for (key, spans) in keys {
+            let state = self.drift.entry(key.clone()).or_default();
+            let detection = match agent_obs::drift::detect(
+                state,
+                &key,
+                envelope.window,
+                &spans,
+                &envelope.fitness,
+                None,
+            ) {
+                Ok(detection) => detection,
+                Err(error) => {
+                    eprintln!("s1: drift detection failed for {}: {error}", key.model_id);
+                    continue;
+                }
+            };
+            for event in detection.events {
+                let severity = match event.severity {
+                    agent_contracts::metric::AlertSeverity::Critical => {
+                        crate::wiring::Severity::Critical
+                    }
+                    _ => crate::wiring::Severity::Advisory,
+                };
+                let detail = format!("{:?} on {}", event.signal, key.model_id);
+                let reaction = crate::wiring::react(
+                    severity,
+                    // The lineage a drift is scoped to is not in the signal: a
+                    // provider drifted, not a lineage. Scoping it is the router's
+                    // question and is left to a human, which is what
+                    // `recommend_kill` is for.
+                    None,
+                    &detail,
+                    &mut self.experiments,
+                    now,
+                );
+                if reaction.recommend_kill {
+                    eprintln!(
+                        "s1: critical drift with no lineage to scope to: {detail}. A human \
+                         decides whether to engage the kill switch; nothing is stopped \
+                         automatically."
+                    );
+                }
+                out.extend(reaction.events);
+            }
+        }
+        out
+    }
+
     /// Drain the outbox for the writer. An API handler never appends.
     pub fn take_outbox(&mut self) -> Vec<Draft> {
         std::mem::take(&mut self.outbox)
     }
 
-    /// Record what the writer appended, for the dashboard's window.
+    /// Admit a request the HTTP layer will serve from the store itself.
     ///
-    /// Called **after** the append, never before: the feed shows what is in the
-    /// log, and a feed that showed intentions would let an operator act on a write
-    /// that was then fenced out.
-    pub fn appended(
-        &mut self,
-        shard: &str,
-        seq: u64,
-        draft: &Draft,
-        actor: &Actor,
-        now: Timestamp,
-    ) {
-        self.feed.record_line(Line {
-            seq,
-            shard: shard.to_owned(),
-            kind: draft.kind.to_owned(),
-            actor: actor_name(actor),
-            subject: draft.subject.as_str().to_owned(),
-            ts: now,
-            data: draft.data.clone(),
-        });
+    /// Two routes read C4 directly — `/lineages/{root}` and `/units/{hash}` — and the
+    /// store is async while a handler is not. They are therefore served outside
+    /// `handle`, and this is how they are still subject to the *same* admission
+    /// rules: the route table's required action, the token table, the roles. A
+    /// second copy of those rules in the HTTP layer is exactly the drift this
+    /// avoids.
+    pub fn admit_read(&self, route: &Route, token: Option<&str>, now: Timestamp) -> Result<()> {
+        let principal = token.and_then(|token| self.identities.resolve(token, now));
+        admit(route, principal.as_ref(), &Value::Null).map(|_| ())
     }
+
+    /// Add drafts the writer's own loops produced.
+    ///
+    /// Distinct from `restore_outbox`: these are new, so they go **after** whatever
+    /// a handler left, preserving the order decisions were actually made in.
+    pub fn extend_outbox(&mut self, drafts: Vec<Draft>) {
+        self.outbox.extend(drafts);
+    }
+
+    /// Put drafts back after an append that did not land.
+    ///
+    /// The writer drains the outbox before it knows whether the batch committed, so
+    /// a failed append has to give them back or they are lost with no trace. They go
+    /// in front of anything a handler added meanwhile, because they were produced
+    /// first and the log's order is the order decisions were made.
+    pub fn restore_outbox(&mut self, drafts: Vec<Draft>) {
+        let later = std::mem::replace(&mut self.outbox, drafts);
+        self.outbox.extend(later);
+    }
+
+    /// Rebuild the read models from the log.
+    ///
+    /// Called at start-up, before the service answers anything. Until the binary
+    /// had a store this could not exist: the feed was the only record of what had
+    /// happened and it died with the process, so a restart served an empty window
+    /// over whatever the log held. Both folds here are the ones the read models
+    /// already define — `Line: From<&Event>` and `Projections::apply_event` — so a
+    /// replayed service and a running one cannot disagree.
+    pub fn replay(&mut self, shard: &str, events: &[Event]) {
+        for event in events {
+            let mut line = Line::from(event);
+            // `From<&Event>` takes the shard from the event; a log read gives the
+            // shard it was read from, and they agree. Asserting it would be a
+            // panic on a corrupt log, which the store already refuses.
+            line.shard = shard.to_owned();
+            self.feed.record_line(line);
+            self.projections.apply_event(event);
+        }
+    }
+
+    // `appended(shard, seq, draft, actor, now)` used to live here: it built a feed
+    // line out of a *draft* once the writer said the append had succeeded. It is
+    // gone because it was a second fold of the same events, and the two did not
+    // agree — it rendered the actor unprefixed where `Line: From<&Event>` prefixes
+    // it, and stamped the tick's clock where the event carries its own. A running
+    // service and a restarted one therefore showed different feeds for the same
+    // log. The writer now reads its own batch back and folds it through [`replay`],
+    // so there is one projection and it is the log's.
 
     pub fn register_instance(&mut self, instance: &str, key: &str) {
         self.instances.register(InstanceKey {
@@ -683,8 +1077,79 @@ mod tests {
             "lineage_root": HashId::from_sha256([1; 32]),
             "config_ref": HashId::from_sha256([2; 32]),
             "budget_id": "exp-budget",
-            "shard": "pop-1:0",
+            "shard": "pop-1-0",
+            "max_cost": 0.1,
         })
+    }
+
+    /// Draining edits the draft and nothing else. The route used to be routed,
+    /// authorized, tested as mutating — and incapable of succeeding.
+    #[test]
+    fn draining_a_member_edits_the_draft_rather_than_reaching_a_deployment() {
+        let mut service = service();
+        let root = HashId::from_sha256([7; 32]);
+        // A policy in force with one active member.
+        service.policy_in_force = Some(agent_contracts::bundle::DeploymentPolicy {
+            version: 1,
+            deployments: vec![agent_contracts::bundle::PolicyDeployment {
+                root: root.clone(),
+                state: agent_contracts::types::DeployState::Active,
+                share: 1.0,
+            }],
+            capacity: agent_contracts::bundle::CapacityPolicy::default(),
+            signature: agent_contracts::bundle::Signature {
+                key_id: "k".into(),
+                sig: "sig".into(),
+            },
+            policy_id: HashId::from_sha256([1; 32]),
+            issued_at: 0,
+        });
+
+        let response = service.handle(
+            "POST",
+            &format!("/deployments/{root}/drain"),
+            Some("t-ops"),
+            &json!({"idempotency_key": "d-1"}),
+            1_000,
+        );
+        assert_eq!(response.status, 200, "{:?}", response.body);
+
+        let draft = service.policy_draft.as_ref().expect("the draft");
+        let member = draft
+            .deployments
+            .iter()
+            .find(|d| d.root == root)
+            .expect("the member is in the draft");
+        assert_eq!(member.state, agent_contracts::types::DeployState::Draining);
+        assert_eq!(
+            member.share, 0.0,
+            "draining with a non-zero share would be a policy that says two things"
+        );
+        // And nothing is in force yet: a drain that took effect by itself would be
+        // an inbound control path into a deployment.
+        assert_eq!(
+            service
+                .policy_in_force
+                .as_ref()
+                .map(|p| p.deployments[0].state),
+            Some(agent_contracts::types::DeployState::Active),
+            "the signed policy is unchanged until somebody issues one"
+        );
+    }
+
+    /// Draining something that is not in the policy is a 404, not a draft entry
+    /// invented on the caller's behalf.
+    #[test]
+    fn draining_an_unknown_deployment_is_not_found() {
+        let mut service = service();
+        let response = service.handle(
+            "POST",
+            &format!("/deployments/{}/drain", HashId::from_sha256([9; 32])),
+            Some("t-ops"),
+            &json!({"idempotency_key": "d-2"}),
+            1_000,
+        );
+        assert_eq!(response.status, 404, "{:?}", response.body);
     }
 
     #[test]
@@ -1016,8 +1481,16 @@ mod tests {
             )
             .unwrap();
         let response = service.handle("GET", "/jobs", Some("t-viewer"), &json!({}), 1_200);
-        assert_eq!(response.body["shards"]["pop-1:0"]["ready"], 1);
-        assert_eq!(response.body["shards"]["pop-1:0"]["reserved_cost"], 2.5);
+        let shard = &response.body["shards"]["pop-1-0"];
+        // The submission itself queues `INITIAL_REPLICATES`, so this one makes four.
+        assert_eq!(shard["ready"], 1 + INITIAL_REPLICATES);
+        let reserved = shard["reserved_cost"].as_f64().expect("a number");
+        let expected = 2.5 + 0.1 * INITIAL_REPLICATES as f64;
+        assert!(
+            (reserved - expected).abs() < 1e-9,
+            "the view reports what was reserved, not how many rows there are: \
+             {reserved} != {expected}"
+        );
     }
 
     #[test]

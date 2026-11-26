@@ -17,7 +17,7 @@
 //! "jobs that happen to run on the writer": running two of them against one shard
 //! would interleave two selections over one population.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use agent_contracts::types::{Fence, ShardId, Timestamp};
 use serde::{Deserialize, Serialize};
@@ -144,7 +144,7 @@ impl ShardMap {
 }
 
 /// The loops that may only run inside the lease holder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum WriterLoop {
     /// The Optimizer's selection step: two of these over one population would
     /// interleave two selections.
@@ -170,6 +170,14 @@ pub struct Coordinator<B: LeaseBackend> {
     ttl_ms: i64,
     /// The leases this node believes it holds.
     held: BTreeMap<ShardId, Grant>,
+    /// Which single-writer loops are in flight, per shard.
+    ///
+    /// The fence stops a *second node* from writing; this stops this node from
+    /// starting a second copy of the same loop over one population, which is the
+    /// whole reason [`WriterLoop`] is an enum rather than a comment. A selection
+    /// that ran twice concurrently would vary the same parents twice and commit
+    /// both results.
+    in_flight: BTreeMap<ShardId, BTreeSet<WriterLoop>>,
 }
 
 impl<B: LeaseBackend> Coordinator<B> {
@@ -179,6 +187,7 @@ impl<B: LeaseBackend> Coordinator<B> {
             node: node.into(),
             ttl_ms: if ttl_ms > 0 { ttl_ms } else { DEFAULT_TTL_MS },
             held: BTreeMap::new(),
+            in_flight: BTreeMap::new(),
         }
     }
 
@@ -304,9 +313,64 @@ impl<B: LeaseBackend> Coordinator<B> {
     }
 
     /// Whether this node may run a single-writer loop for a shard.
+    ///
+    /// Two conditions, and both matter: this node holds an unexpired lease, **and**
+    /// that loop is not already running over this shard. The second used to be
+    /// unimplemented — the `which` argument was discarded — so `may_run` was a
+    /// plain fence check and the enum documented an exclusion nothing enforced.
     pub fn may_run(&self, shard: &ShardId, which: WriterLoop, now: Timestamp) -> bool {
-        let _ = which;
-        self.fence(shard, now).is_ok()
+        if self.fence(shard, now).is_err() {
+            return false;
+        }
+        !self
+            .in_flight
+            .get(shard)
+            .is_some_and(|running| running.contains(&which))
+    }
+
+    /// Record a lease this node holds according to **C4**, so the coordinator's
+    /// view matches the store's.
+    ///
+    /// The store's control log is the authority — it is what `append_batch`
+    /// verifies — and this type's remaining job is the per-loop exclusion a single
+    /// process needs. Without this the two disagree: a writer holding a real store
+    /// lease would be refused by `may_run` because the coordinator had never heard
+    /// of the shard, and a generation would silently never run. A `LeaseBackend`
+    /// coordinator is still what a deployment without a store-backed lease uses.
+    pub fn adopt(&mut self, fence: &Fence, now: Timestamp) {
+        self.held.insert(
+            fence.shard.clone(),
+            Grant {
+                shard: fence.shard.clone(),
+                holder: self.node.clone(),
+                epoch: fence.epoch,
+                expires: now + self.ttl_ms,
+            },
+        );
+    }
+
+    /// Claim a loop for a shard, for as long as the returned guard says.
+    ///
+    /// Returns `None` when [`may_run`](Self::may_run) would refuse, so a caller
+    /// cannot check and then run anyway — the check and the claim are one step.
+    pub fn begin(&mut self, shard: &ShardId, which: WriterLoop, now: Timestamp) -> Option<Fence> {
+        if !self.may_run(shard, which, now) {
+            return None;
+        }
+        let fence = self.fence(shard, now).ok()?;
+        self.in_flight
+            .entry(shard.clone())
+            .or_default()
+            .insert(which);
+        Some(fence)
+    }
+
+    /// Release a loop. Called however the loop ended: a loop that failed and was not
+    /// released would never run again on this node.
+    pub fn end(&mut self, shard: &ShardId, which: WriterLoop) {
+        if let Some(running) = self.in_flight.get_mut(shard) {
+            running.remove(&which);
+        }
     }
 
     /// Shards due for renewal, which is what the writer's tick iterates.
@@ -449,6 +513,56 @@ mod tests {
             );
             assert!(!a.may_run(&"other:0".to_owned(), which, 2_000));
         }
+    }
+
+    /// The exclusion the enum exists for: one selection at a time over one
+    /// population. Two concurrent ones would vary the same parents twice.
+    #[test]
+    fn one_loop_of_a_kind_at_a_time_per_shard() {
+        let mut c = Coordinator::new(MemoryLeases::default(), "s1-a", 30_000);
+        let shard = "pop-1-0".to_owned();
+        c.acquire(&shard, 1_000).expect("the lease");
+
+        let fence = c
+            .begin(&shard, WriterLoop::Selection, 1_000)
+            .expect("the first selection may run");
+        assert_eq!(fence.shard, shard);
+        assert!(
+            !c.may_run(&shard, WriterLoop::Selection, 1_000),
+            "a second selection over the same population must not start"
+        );
+        assert!(
+            c.begin(&shard, WriterLoop::Selection, 1_000).is_none(),
+            "and the check and the claim are one step, so it cannot be bypassed"
+        );
+        // A *different* loop is not excluded: they write different things.
+        assert!(
+            c.may_run(&shard, WriterLoop::ArchiveCommit, 1_000),
+            "an archive commit is not a selection"
+        );
+
+        c.end(&shard, WriterLoop::Selection);
+        assert!(
+            c.may_run(&shard, WriterLoop::Selection, 1_000),
+            "released, so the next generation may run"
+        );
+    }
+
+    /// A loop may not run on a shard this node does not hold, whatever is in flight.
+    #[test]
+    fn a_loop_needs_the_lease_as_well_as_the_slot() {
+        let mut c = Coordinator::new(MemoryLeases::default(), "s1-a", 30_000);
+        let shard = "pop-1-0".to_owned();
+        c.acquire(&shard, 1_000).expect("the lease");
+        // Past the TTL: the lease has lapsed.
+        assert!(
+            !c.may_run(&shard, WriterLoop::Selection, 1_000 + 30_001),
+            "an expired lease is not a licence to write"
+        );
+        assert!(
+            c.begin(&shard, WriterLoop::Selection, 1_000 + 30_001)
+                .is_none()
+        );
     }
 
     #[test]

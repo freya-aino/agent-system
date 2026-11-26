@@ -18,7 +18,7 @@
 //! events, not removals, so a replay reproduces every decision.
 
 use agent_contracts::events::BudgetScope;
-use agent_contracts::trace_event::{Actor, OutcomeKind};
+use agent_contracts::trace_event::{Actor, Event, OutcomeKind};
 use agent_contracts::types::{Budget, ErrorCode, Fence, HashId, ShardId, Timestamp};
 use agent_contracts::worker::JobResult;
 use agent_obs::sink::Draft;
@@ -37,16 +37,49 @@ pub struct Applied {
     pub duplicate: bool,
 }
 
-/// The seam to the log. The real one is C4's `Store::append` under a `Fence`; the
-/// trait keeps this crate's tests free of a store and makes the fence explicit at
-/// every call site.
-pub trait Log {
-    /// Append under a fence. The store rejects a stale epoch, which is the last
-    /// line of defence against split brain.
-    fn append(&mut self, fence: &Fence, actor: &Actor, drafts: &[Draft]) -> Result<u64>;
+/// A future returned by the log seam.
+///
+/// Boxed rather than `impl Future`, because every call site holds the log as
+/// `&mut dyn Log` — the writer must not be generic over its backend — and a
+/// return-position `impl Future` is not dyn-compatible.
+pub type LogFuture<'a, T> = std::pin::Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
+
+/// The seam to the log. The real one is C4's `Store::append` under a `Fence`
+/// ([`crate::storelog`]); the trait keeps this crate's tests free of a store and
+/// makes the fence explicit at every call site.
+///
+/// **Async, because the log is.** C4's backends are Postgres over `tokio-postgres`
+/// and S3 over `hyper`; a sync seam could only be satisfied by blocking, and
+/// blocking inside the writer tick would stall the one task allowed to append.
+pub trait Log: Send {
+    /// Append under a fence, returning the shard's new head. The store rejects a
+    /// stale epoch, which is the last line of defence against split brain.
+    ///
+    /// **A shard id is also a log name.** C4 addresses logs by shard, and a
+    /// file-backed backend makes that name a path component: it must be
+    /// `[A-Za-z0-9_.+-]`. A shard id with a colon in it appends to a memory backend
+    /// and is refused by a disk or SQL one, so the id is constrained everywhere
+    /// even though `ShardId` is a bare `String`.
+    fn append<'a>(
+        &'a mut self,
+        fence: &'a Fence,
+        actor: &'a Actor,
+        drafts: &'a [Draft],
+    ) -> LogFuture<'a, u64>;
+
+    /// Read the shard's events from `from`, for the projections the service folds
+    /// at start-up and on each tick. The log is the source of truth; a read model
+    /// that cannot be rebuilt from this is a second claim rather than a projection.
+    ///
+    /// Contract `Event`s, not a reduced shape of our own: `feed::Line` and
+    /// `readmodel::Projections::apply_event` already fold them, and a second type
+    /// here would mean a second fold to keep in step.
+    fn read<'a>(&'a self, shard: &'a ShardId, from: u64, limit: usize)
+    -> LogFuture<'a, Vec<Event>>;
 }
 
-/// An in-memory log for the dev profile and the tests.
+/// An in-memory log for the tests, and the only log a service has when no store is
+/// configured.
 #[derive(Debug, Default)]
 pub struct MemoryLog {
     pub appended: Vec<(Fence, String, Draft)>,
@@ -56,27 +89,76 @@ pub struct MemoryLog {
     pub seq: u64,
 }
 
+pub(crate) fn actor_id(actor: &Actor) -> String {
+    match actor {
+        Actor::Human(id) | Actor::Optimizer(id) | Actor::System(id) | Actor::Service(id) => {
+            id.clone()
+        }
+    }
+}
+
 impl Log for MemoryLog {
-    fn append(&mut self, fence: &Fence, actor: &Actor, drafts: &[Draft]) -> Result<u64> {
-        let highest = self.highest.entry(fence.shard.clone()).or_insert(0);
-        if fence.epoch < *highest {
-            return Err(S1Error::Fenced {
-                shard: fence.shard.clone(),
-                epoch: fence.epoch,
-            });
-        }
-        *highest = fence.epoch;
-        let actor_name = match actor {
-            Actor::Human(id) | Actor::Optimizer(id) | Actor::System(id) | Actor::Service(id) => {
-                id.clone()
+    fn append<'a>(
+        &'a mut self,
+        fence: &'a Fence,
+        actor: &'a Actor,
+        drafts: &'a [Draft],
+    ) -> LogFuture<'a, u64> {
+        Box::pin(async move {
+            let highest = self.highest.entry(fence.shard.clone()).or_insert(0);
+            if fence.epoch < *highest {
+                return Err(S1Error::Fenced {
+                    shard: fence.shard.clone(),
+                    epoch: fence.epoch,
+                });
             }
-        };
-        for draft in drafts {
-            self.seq += 1;
-            self.appended
-                .push((fence.clone(), actor_name.clone(), draft.clone()));
-        }
-        Ok(self.seq)
+            *highest = fence.epoch;
+            let actor_name = actor_id(actor);
+            for draft in drafts {
+                self.seq += 1;
+                self.appended
+                    .push((fence.clone(), actor_name.clone(), draft.clone()));
+            }
+            Ok(self.seq)
+        })
+    }
+
+    fn read<'a>(
+        &'a self,
+        shard: &'a ShardId,
+        from: u64,
+        limit: usize,
+    ) -> LogFuture<'a, Vec<Event>> {
+        Box::pin(async move {
+            Ok(self
+                .appended
+                .iter()
+                .filter(|(fence, _, _)| &fence.shard == shard)
+                .enumerate()
+                .skip(from as usize)
+                .take(limit)
+                .map(|(i, (fence, actor, draft))| {
+                    let seq = i as u64;
+                    Event {
+                        id: agent_contracts::types::EventId {
+                            shard: fence.shard.clone(),
+                            seq,
+                        },
+                        shard: fence.shard.clone(),
+                        seq,
+                        // The chain is the store's job; a test double that faked a
+                        // digest here would be asserting something it cannot know.
+                        prev: HashId::from_sha256([0; 32]),
+                        ts: 0,
+                        actor: Actor::System(actor.clone()),
+                        kind: draft.kind.to_owned(),
+                        subject: draft.subject.clone(),
+                        data: draft.data.clone(),
+                        evidence: draft.evidence.clone(),
+                    }
+                })
+                .collect())
+        })
     }
 }
 
@@ -131,7 +213,7 @@ impl Writer {
     }
 
     /// Apply one result: settle, append, deduplicate.
-    pub fn apply_result(
+    pub async fn apply_result(
         &mut self,
         result: &JobResult,
         queue: &mut Queue,
@@ -178,7 +260,7 @@ impl Writer {
         {
             let _ = account;
         }
-        log.append(fence, &self.actor, &events)?;
+        log.append(fence, &self.actor, &events).await?;
         self.applied.insert(key);
         Ok(Applied {
             events: std::mem::take(&mut events),
@@ -196,7 +278,7 @@ impl Writer {
     /// the ledger, the log and the fence — and bundling them would hide that this
     /// one call touches all six.
     #[allow(clippy::too_many_arguments)]
-    pub fn apply_failure(
+    pub async fn apply_failure(
         &mut self,
         job: &agent_contracts::types::JobRef,
         component: &str,
@@ -222,6 +304,7 @@ impl Writer {
                         "component": component,
                         "detail": format!("{detail} (after {attempts} attempts)"),
                     }),
+                    evidence: vec![],
                 }]
             }
             FailOutcome::Finished => {
@@ -230,7 +313,7 @@ impl Writer {
             }
         };
         if !events.is_empty() {
-            log.append(fence, &self.actor, &events)?;
+            log.append(fence, &self.actor, &events).await?;
         }
         Ok(Applied {
             events,
@@ -239,8 +322,13 @@ impl Writer {
     }
 
     /// Append drafts a plug-in produced, under this writer's fence.
-    pub fn append(&mut self, drafts: &[Draft], log: &mut dyn Log, fence: &Fence) -> Result<u64> {
-        log.append(fence, &self.actor, drafts)
+    pub async fn append(
+        &mut self,
+        drafts: &[Draft],
+        log: &mut dyn Log,
+        fence: &Fence,
+    ) -> Result<u64> {
+        log.append(fence, &self.actor, drafts).await
     }
 
     /// Reclaim leases whose visibility timeout has passed, and report the jobs that
@@ -284,6 +372,7 @@ fn budget_exhausted_draft(
             "budget": wanted,
             "spent": spent,
         }),
+        evidence: vec![],
     }
 }
 
@@ -301,6 +390,7 @@ fn outcome_draft(result: &JobResult) -> Draft {
             "traces": result.traces,
             "worker": result.worker,
         }),
+        evidence: vec![],
     }
 }
 
@@ -414,8 +504,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_duplicate_result_appends_once() {
+    #[tokio::test]
+    async fn a_duplicate_result_appends_once() {
         let mut writer = Writer::new(shard(), "s1-a");
         let mut queue = Queue::new(QueueConfig::default());
         let mut ledger = ledger(10.0);
@@ -438,6 +528,7 @@ mod tests {
                 &fence(1),
                 2_000,
             )
+            .await
             .unwrap();
         assert!(!first.duplicate);
         assert_eq!(first.events.len(), 1);
@@ -452,6 +543,7 @@ mod tests {
                 &fence(1),
                 2_100,
             )
+            .await
             .unwrap();
         assert!(second.duplicate);
         assert_eq!(
@@ -483,8 +575,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_candidate_failure_is_appended_as_an_outcome_and_charged() {
+    #[tokio::test]
+    async fn a_candidate_failure_is_appended_as_an_outcome_and_charged() {
         let mut writer = Writer::new(shard(), "s1-a");
         let mut queue = Queue::new(QueueConfig::default());
         let mut ledger = ledger(10.0);
@@ -506,14 +598,15 @@ mod tests {
                 &fence(1),
                 2_000,
             )
+            .await
             .unwrap();
         assert_eq!(applied.events[0].kind, "experiment_outcome");
         assert!((ledger.committed("exp-1", 2_000).cost - 0.05).abs() < 1e-9);
         assert!(is_candidate_outcome(OutcomeKind::CompileError));
     }
 
-    #[test]
-    fn an_infrastructure_fault_never_becomes_a_candidate_outcome() {
+    #[tokio::test]
+    async fn an_infrastructure_fault_never_becomes_a_candidate_outcome() {
         let mut writer = Writer::new(shard(), "s1-a");
         let mut queue = Queue::new(QueueConfig::default());
         let mut ledger = ledger(10.0);
@@ -542,6 +635,7 @@ mod tests {
                     &fence(1),
                     1_000 + i64::from(attempt),
                 )
+                .await
                 .unwrap();
             if attempt < 3 {
                 assert!(applied.events.is_empty(), "nothing is decided yet");
@@ -567,20 +661,25 @@ mod tests {
         let _ = id;
     }
 
-    #[test]
-    fn a_fenced_out_writer_cannot_append() {
+    #[tokio::test]
+    async fn a_fenced_out_writer_cannot_append() {
         let mut writer = Writer::new(shard(), "s1-a");
         let mut log = MemoryLog::default();
         let draft = Draft {
             kind: "committed",
             subject: HashId::from_sha256([1; 32]),
             data: json!({}),
+            evidence: vec![],
         };
         // A newer writer took over at epoch 2.
         writer
             .append(std::slice::from_ref(&draft), &mut log, &fence(2))
+            .await
             .unwrap();
-        let err = writer.append(&[draft], &mut log, &fence(1)).unwrap_err();
+        let err = writer
+            .append(&[draft], &mut log, &fence(1))
+            .await
+            .unwrap_err();
         assert!(
             matches!(err, S1Error::Fenced { .. }),
             "store-side fencing is the last line of defence: {err}"

@@ -281,11 +281,16 @@ pub struct AdmittedCall {
     pub idempotency_key: Option<String>,
 }
 
-/// The published OpenAPI document, as far as this crate fixes it: the paths, their
-/// methods and the role each one needs. Generated from the route table rather than
-/// maintained beside it, so the document cannot drift from the service.
-pub fn openapi() -> Value {
-    let routes: Vec<(&str, &str, Route)> = vec![
+/// The published surface: every path, its method, and the route it must parse to.
+///
+/// **A list of values, so the compiler cannot prove it complete.** What *is* proven
+/// is that every entry here parses to the route it claims
+/// (`every_documented_path_is_one_the_router_serves`) — which is the direction that
+/// was wrong: five paths were advertised in a colon form `Route::parse` cannot
+/// match. A route served and *omitted* here is still only caught by review, because
+/// nothing can enumerate the variants `Route::parse` produces.
+pub fn routes() -> Vec<(&'static str, &'static str, Route)> {
+    vec![
         ("get", "/healthz", Route::Health),
         ("get", "/experiments", Route::ListExperiments),
         ("post", "/experiments", Route::SubmitExperiment),
@@ -296,33 +301,34 @@ pub fn openapi() -> Value {
         ),
         (
             "post",
-            "/experiments/{id}:pause",
+            "/experiments/{id}/pause",
             Route::PauseExperiment(String::new()),
         ),
         (
             "post",
-            "/experiments/{id}:resume",
+            "/experiments/{id}/resume",
             Route::ResumeExperiment(String::new()),
         ),
         (
             "post",
-            "/experiments/{id}:cancel",
+            "/experiments/{id}/cancel",
             Route::CancelExperiment(String::new()),
         ),
         ("get", "/lineages/{root}", Route::GetLineage(String::new())),
         ("get", "/units/{hash}", Route::GetUnit(String::new())),
+        ("get", "/openapi.json", Route::OpenApi),
         ("get", "/jobs", Route::ListJobs),
         ("get", "/budgets", Route::ListBudgets),
         ("post", "/budgets/{id}", Route::SetBudget(String::new())),
         ("get", "/promotions", Route::ListPromotions),
         (
             "post",
-            "/promotions/{id}:approve",
+            "/promotions/{id}/approve",
             Route::ApprovePromotion(String::new()),
         ),
         (
             "post",
-            "/promotions/{id}:reject",
+            "/promotions/{id}/reject",
             Route::RejectPromotion(String::new()),
         ),
         ("get", "/deployments", Route::ListDeployments),
@@ -336,7 +342,17 @@ pub fn openapi() -> Value {
             "/deployments/{root}/functions",
             Route::DeploymentFunctions(String::new()),
         ),
+        (
+            "post",
+            "/deployments/{root}/drain",
+            Route::DrainMember(String::new()),
+        ),
         ("get", "/policy", Route::GetPolicy),
+        (
+            "post",
+            "/policy/auto-incorporate",
+            Route::SetAutoIncorporate,
+        ),
         ("post", "/policy", Route::PutPolicy),
         ("get", "/events", Route::QueryEvents),
         ("get", "/events/subscribe", Route::SubscribeEvents),
@@ -348,9 +364,15 @@ pub fn openapi() -> Value {
             Route::ReleaseKillSwitch(String::new()),
         ),
         ("post", "/telemetry", Route::Telemetry),
-    ];
+    ]
+}
+
+/// The published OpenAPI document, as far as this crate fixes it: the paths, their
+/// methods and the role each one needs. Built from [`routes`], which is checked
+/// against `Route::parse`, so a documented path is one a caller can reach.
+pub fn openapi() -> Value {
     let mut paths = serde_json::Map::new();
-    for (method, path, route) in routes {
+    for (method, path, route) in routes() {
         let entry = paths.entry(path.to_owned()).or_insert_with(|| json!({}));
         entry[method] = json!({
             "x-role": route.action().needs().as_str(),
@@ -599,9 +621,43 @@ mod tests {
             true
         );
         assert_eq!(
-            document["paths"]["/promotions/{id}:approve"]["post"]["x-role"],
+            document["paths"]["/promotions/{id}/approve"]["post"]["x-role"],
             "approver"
         );
+    }
+
+    /// **The claim, checked.** The document's comment said it "cannot drift from the
+    /// service, because it is the table" — and it had drifted: it advertised
+    /// `/promotions/{id}:approve` and four other colon forms that `Route::parse`
+    /// cannot match, and omitted three routes the service serves. A test asserting
+    /// one path's role could not catch either.
+    ///
+    /// This closes the direction that matters most to a caller: every documented
+    /// path is one they can actually reach.
+    #[test]
+    fn every_documented_path_is_one_the_router_serves() {
+        for (method, path, route) in routes() {
+            // A concrete value for each template segment, which is what a caller
+            // would send.
+            let concrete: String = path
+                .split('/')
+                .map(|segment| {
+                    if segment.starts_with('{') {
+                        "x"
+                    } else {
+                        segment
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+            let parsed = Route::parse(&method.to_uppercase(), &concrete);
+            assert_eq!(
+                std::mem::discriminant(&parsed),
+                std::mem::discriminant(&route),
+                "the document advertises {method} {path}, which the router parses as \
+                 {parsed:?} rather than {route:?}"
+            );
+        }
     }
 
     #[test]

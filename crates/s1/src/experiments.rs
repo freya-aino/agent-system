@@ -76,6 +76,15 @@ pub struct Submission {
     pub config_ref: HashId,
     pub budget_id: String,
     pub shard: String,
+    /// What one replicate may spend, reserved against `budget_id` before a job is
+    /// dispatched.
+    ///
+    /// The submitter's number, not the Unit's: a Unit's `policy` caps what it may
+    /// *consume* and is part of its hash, while this is what this experiment is
+    /// willing to pay per run. Two different decisions with two different owners,
+    /// so neither is derived from the other. Mandatory, because a job the scheduler
+    /// cannot reserve against is a job that can overrun a budget silently.
+    pub max_cost: f64,
     /// Every mutation carries one. A resubmission with the same key returns the
     /// experiment that already exists.
     pub idempotency_key: String,
@@ -249,6 +258,7 @@ mod tests {
 
     fn submission(key: &str) -> Submission {
         Submission {
+            max_cost: 0.1,
             lineage_root: HashId::from_sha256([1; 32]),
             config_ref: HashId::from_sha256([2; 32]),
             budget_id: "exp-budget".into(),

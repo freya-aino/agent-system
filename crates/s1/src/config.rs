@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use agent_contracts::driver::IsolationLevel;
+use agent_contracts::types::HashId;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, S1Error};
@@ -48,7 +49,15 @@ pub enum StoreBackend {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlBackend {
-    Sqlite,
+    /// C4's disk backend: the log, the index and the genealogy adjacency in local
+    /// files, with the same compare-and-set append every other backend has.
+    ///
+    /// **This was `sqlite` until the binary actually bound a backend.** There is no
+    /// SQLite in this workspace and there never was: the name described an
+    /// intention, and a config value naming a store that does not exist is worse
+    /// than one naming a store that does. The dev profile's promise — one process,
+    /// no external services — is kept by the disk backend.
+    Disk,
     Postgres,
 }
 
@@ -114,6 +123,141 @@ pub struct Config {
     /// Export of anything to a third party is off unless a deployment turns it on.
     #[serde(default)]
     pub allow_export: bool,
+    /// The model and tool endpoints runs may reach. Empty is valid and means this
+    /// node evaluates nothing, which is what a pure API replica is.
+    #[serde(default)]
+    pub connections: Vec<ConnectionConfig>,
+    /// Where telemetry is exported, if anywhere.
+    ///
+    /// **Absent means off**, which is the default and is expressed as the absence
+    /// of a sink rather than a flag a code path could forget to check. Enabling it
+    /// cannot widen what leaves the system: the payload is C12's shaping of an
+    /// envelope that was already scrubbed, so this chooses where content goes and
+    /// never what.
+    #[serde(default)]
+    pub otel: Option<OtelConfig>,
+    /// The search loop. Absent means this node serves the API and runs no search,
+    /// which is the default and what every replica but the writer wants.
+    #[serde(default)]
+    pub search: Option<SearchConfig>,
+}
+
+/// Where to export telemetry.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OtelConfig {
+    /// The collector's OTLP/HTTP endpoint, `http://host:port/v1/traces`.
+    ///
+    /// `https` is refused rather than silently downgraded, so a link configured for
+    /// TLS is never served in clear.
+    pub endpoint: String,
+}
+
+/// What the writer's selection loop runs over.
+///
+/// **Off unless configured**, and that is not timidity: a generation makes real
+/// provider calls against a real budget, so a node that searched because nobody
+/// said not to would spend money on start-up. It is also the honest shape — a
+/// population is a thing a deployment creates, not a property of the binary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchConfig {
+    /// The population this node's shard carries.
+    pub population: String,
+    /// The Swarms that *are* the evaluation environment: each carries a workload
+    /// dataset and the metric refs (C13), so these hashes fix what "evaluated"
+    /// means.
+    ///
+    /// **Several, because a promotion needs several.** C6 refuses to propose a
+    /// candidate whose evidence covers fewer than `SWARM_VARIATIONS` variations of
+    /// the environment — a candidate measured in one has not shown it generalises.
+    /// One entry is legal and means this population can be searched but nothing in
+    /// it can ever be proposed, which the service says at start-up rather than
+    /// leaving an operator to wonder why.
+    pub swarm: Vec<HashId>,
+    /// The `Evaluation` every number is recorded under. Two figures are comparable
+    /// only when it matches.
+    pub evaluation: HashId,
+    /// The price table every run is costed under, read from the store by hash.
+    ///
+    /// Pinned rather than configured inline, because C3 refuses a comparison
+    /// spanning two tables — cheap-model substitution would otherwise look like a
+    /// win — so the table has to be a thing both sides of a comparison name.
+    pub price_table: HashId,
+    /// The hashed Optimizer Unit configuring this population. A reconfiguration is
+    /// a new hash, never an edit.
+    pub config_ref: HashId,
+    /// The gate policy a promotion proposal is judged against.
+    pub gate_policy: HashId,
+    /// Where the population starts, before the log's own `committed` events are
+    /// folded over it.
+    pub seeds: Vec<HashId>,
+    /// Children per generation.
+    #[serde(default = "default_offspring")]
+    pub offspring: usize,
+    /// The cost ceiling for the whole population. A generation stops when it is
+    /// reached rather than being refused, so a slice that runs out still records
+    /// what it learned.
+    #[serde(default)]
+    pub budget_cost: f64,
+    /// How often a generation may start. Generations are expensive and the tick is
+    /// five seconds; without this the loop would run as fast as the provider lets it.
+    #[serde(default = "default_generation_interval")]
+    pub interval_ms: i64,
+}
+
+fn default_offspring() -> usize {
+    4
+}
+
+fn default_generation_interval() -> i64 {
+    60_000
+}
+
+/// One advertised endpoint a run may call.
+///
+/// **No credential field.** The secret arrives from the environment, named by
+/// `credential_env`, for the same reason `control.dsn` may not carry a password: a
+/// config file that holds one is a config file nobody can commit. The name of the
+/// variable is not itself a secret, so it belongs here where it is reviewable.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionConfig {
+    pub name: String,
+    pub base_url: String,
+    #[serde(default)]
+    pub protocol: ConnectionProtocol,
+    /// The models this endpoint serves. A `model` primitive naming one that is not
+    /// here cannot be dispatched, which is how a pinned model stays pinned.
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default = "default_rpm")]
+    pub rpm: u32,
+    #[serde(default = "default_tpm")]
+    pub tpm: u64,
+    /// The environment variable holding this endpoint's credential, if it needs one.
+    #[serde(default)]
+    pub credential_env: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionProtocol {
+    #[default]
+    OpenAiCompatible,
+    /// The deterministic in-process provider. An ordinary connection rather than a
+    /// special case (C13: "no mocked services as a concept"), so the whole loop
+    /// runs reproducibly offline with no second code path — and the validator
+    /// refuses it in the prod profile.
+    Fake,
+}
+
+fn default_rpm() -> u32 {
+    60
+}
+
+fn default_tpm() -> u64 {
+    60_000
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -123,6 +267,23 @@ pub struct StoreConfig {
     /// The local root, for `disk`.
     #[serde(default)]
     pub root: Option<PathBuf>,
+    /// The bucket, for `s3`.
+    #[serde(default)]
+    pub bucket: Option<String>,
+    /// The region, for `s3`. Garage and most S3-compatible stores ignore it but
+    /// still require it in the signature, which is why it is not optional there.
+    #[serde(default)]
+    pub region: Option<String>,
+    /// Path-style addressing, for `s3`. Required by Garage and MinIO; virtual-host
+    /// style is the AWS default.
+    #[serde(default)]
+    pub path_style: bool,
+    /// A key prefix inside the bucket, so one bucket can hold several deployments.
+    #[serde(default)]
+    pub prefix: Option<String>,
+    /// A CA bundle for the endpoint's TLS, when it is not a public CA.
+    #[serde(default)]
+    pub ca_bundle: Option<PathBuf>,
     /// The endpoint, for `s3` or `sql`.
     #[serde(default)]
     pub endpoint: Option<String>,
@@ -155,6 +316,10 @@ pub struct VectorConfig {
     pub backend: VectorBackend,
     #[serde(default)]
     pub endpoint: Option<String>,
+    /// A CA bundle for the endpoint's TLS. The API key is **not** here: it is a
+    /// secret, and secrets arrive from the environment ([`crate::backends`]).
+    #[serde(default)]
+    pub ca_bundle: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -209,11 +374,19 @@ impl Config {
             store: StoreConfig {
                 backend: StoreBackend::Disk,
                 root: Some(root.join("store")),
+                bucket: None,
+                region: None,
+                path_style: false,
+                prefix: None,
+                ca_bundle: None,
                 endpoint: None,
             },
             control: ControlConfig {
-                backend: ControlBackend::Sqlite,
-                dsn: root.join("control.db").display().to_string(),
+                backend: ControlBackend::Disk,
+                // The log, the index and the genealogy adjacency, in files. Named
+                // `log` rather than `control.db` now that nothing here is a
+                // single-file database.
+                dsn: root.join("log").display().to_string(),
             },
             queue: QueueConfig {
                 backend: QueueBackend::InDb,
@@ -224,6 +397,7 @@ impl Config {
             vector: VectorConfig {
                 backend: VectorBackend::InProcess,
                 endpoint: None,
+                ca_bundle: None,
             },
             driver: DriverConfig {
                 isolation: IsolationLevel::Process,
@@ -239,6 +413,22 @@ impl Config {
             max_ready_per_shard: default_max_ready(),
             four_eyes: true,
             auto_incorporate: BTreeMap::new(),
+            // The dev profile evaluates with nothing external, which is only
+            // possible because a deterministic provider is an ordinary connection.
+            connections: vec![ConnectionConfig {
+                name: "fake".to_owned(),
+                base_url: "inproc://fake".to_owned(),
+                protocol: ConnectionProtocol::Fake,
+                models: vec!["fake-model-1".to_owned()],
+                rpm: default_rpm(),
+                tpm: default_tpm(),
+                credential_env: None,
+            }],
+            // No export: off is the absence of a sink.
+            otel: None,
+            // No search: the dev profile serves the API, and a generation is
+            // something an operator asks for.
+            search: None,
             allow_export: false,
         }
     }
@@ -361,11 +551,25 @@ impl Config {
                     "static tokens are a dev convenience; the prod profile needs OIDC",
                 ));
             }
-            if self.control.backend == ControlBackend::Sqlite {
+            if self.control.backend == ControlBackend::Disk {
                 return Err(S1Error::config(
                     "control.backend",
-                    "SQLite gives one writer and no CAS across nodes: the prod \
-                     profile needs Postgres",
+                    "the disk backend gives one writer and no CAS across nodes: the \
+                     prod profile needs Postgres",
+                ));
+            }
+            if let Some(fake) = self
+                .connections
+                .iter()
+                .find(|c| c.protocol == ConnectionProtocol::Fake)
+            {
+                return Err(S1Error::config(
+                    "connections",
+                    format!(
+                        "connection {:?} is the deterministic in-process provider; the prod \
+                         profile measures candidates against real endpoints",
+                        fake.name
+                    ),
                 ));
             }
             if self.driver.isolation != IsolationLevel::Microvm
@@ -404,7 +608,7 @@ impl Config {
         if self.store.backend != StoreBackend::Disk {
             unwired.push("store.backend");
         }
-        if self.control.backend != ControlBackend::Sqlite {
+        if self.control.backend != ControlBackend::Disk {
             unwired.push("control.backend");
         }
         if self.queue.backend != QueueBackend::InDb {
@@ -422,7 +626,7 @@ impl Config {
     /// Whether the dev profile's promise holds: nothing external is required.
     pub fn needs_external_services(&self) -> bool {
         self.store.backend != StoreBackend::Disk
-            || self.control.backend != ControlBackend::Sqlite
+            || self.control.backend != ControlBackend::Disk
             || self.queue.backend != QueueBackend::InDb
             || self.vector.backend != VectorBackend::InProcess
             || self.auth.mode != AuthMode::StaticTokens
@@ -524,6 +728,13 @@ pub(crate) mod tests {
         config.control.backend = ControlBackend::Postgres;
         config.control.dsn = "postgres://db.internal/agent".into();
         let err = config.validate().unwrap_err();
+        assert!(
+            format!("{err}").contains("in-process provider"),
+            "the dev profile's deterministic provider is a dev convenience too: {err}"
+        );
+
+        config.connections.clear();
+        let err = config.validate().unwrap_err();
         assert!(format!("{err}").contains("microvm"), "{err}");
 
         config.driver.isolation = IsolationLevel::Microvm;
@@ -538,6 +749,7 @@ pub(crate) mod tests {
         config.auth.issuer = Some("https://idp.example".into());
         config.control.backend = ControlBackend::Postgres;
         config.control.dsn = "postgres://db.internal/agent".into();
+        config.connections.clear();
         config.driver.isolation = IsolationLevel::Container;
         assert!(config.validate().is_err());
         config.driver.allow_weaker_isolation = true;
@@ -583,7 +795,7 @@ pub(crate) mod tests {
             backend = "disk"
             root = "/srv/store"
             [control]
-            backend = "sqlite"
+            backend = "disk"
             dsn = "/srv/control.db"
             [queue]
             backend = "in_db"
@@ -609,7 +821,7 @@ pub(crate) mod tests {
             backend = "disk"
             root = "/srv/store"
             [control]
-            backend = "sqlite"
+            backend = "disk"
             dsn = "/srv/control.db"
             [queue]
             backend = "in_db"
@@ -683,7 +895,7 @@ pub(crate) mod tests {
             backend = "disk"
             root = "/srv/store"
             [control]
-            backend = "sqlite"
+            backend = "disk"
             dsn = "/srv/control.db"
             [queue]
             backend = "in_db"

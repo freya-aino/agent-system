@@ -164,6 +164,7 @@ pub fn drafts_of(events: &[Event]) -> Result<Vec<Draft>> {
                 kind,
                 subject: event.subject.clone(),
                 data: event.data.clone(),
+                evidence: vec![],
             })
         })
         .collect()
@@ -249,6 +250,7 @@ mod tests {
             kind: "committed",
             subject: HashId::from_sha256([1; 32]),
             data: serde_json::json!({}),
+            evidence: vec![],
         }]);
         assert_eq!(produced.events.len(), 1);
         assert!(Produced::nothing().events.is_empty());

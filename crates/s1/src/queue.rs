@@ -407,7 +407,11 @@ impl Queue {
                 e.job.shard == shard && matches!(e.state, JobState::Ready | JobState::InFlight)
             })
             .map(|e| e.job.reservation().cost)
-            .sum()
+            .sum::<f64>()
+            // Normalises negative zero, which an empty or fully-released shard can
+            // produce and which serialises as `-0.0`. The number is right either
+            // way; an operator reading a dashboard should not have to know that.
+            + 0.0
     }
 
     pub fn get(&self, id: &str) -> Option<&Job> {

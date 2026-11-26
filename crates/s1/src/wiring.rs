@@ -132,6 +132,7 @@ pub fn react(
             },
             "detail": detail,
         }),
+        evidence: vec![],
     }];
     let paused = match (severity, lineage) {
         (Severity::Critical, Some(root)) => {
@@ -149,6 +150,7 @@ pub fn react(
                         "reason_code": "drift_detected",
                         "issued_by": "system:c12",
                     }),
+                    evidence: vec![],
                 });
             }
             ids
@@ -181,7 +183,10 @@ pub fn sentinel_due(last_run: Option<Timestamp>, interval_ms: i64, now: Timestam
 /// Where an exported envelope goes. The seam keeps the HTTP client out of this
 /// crate and makes "export is off" the absence of a sink rather than a flag some
 /// code path could forget to check.
-pub trait OtelSink {
+/// `Send`, because the service holds one behind a mutex in a spawned task — the
+/// same reason C6's `Operator` needs it. A sink that could not cross a thread
+/// could only be used from a test.
+pub trait OtelSink: Send {
     fn send(&mut self, payload: &Value) -> Result<()>;
 }
 
@@ -193,7 +198,11 @@ pub trait OtelSink {
 /// enabling export cannot widen what leaves the system, only where it goes.
 pub fn export(
     envelope: &TelemetryEnvelope,
-    sink: Option<&mut dyn OtelSink>,
+    // `+ 'static` because the service holds its sink in a `Box<dyn OtelSink>` and a
+    // trait object's lifetime is invariant under `&mut`: without it, a boxed
+    // `'static` sink cannot be passed at all. Every concrete sink satisfies it —
+    // they hold no borrows — so this costs callers nothing.
+    sink: Option<&mut (dyn OtelSink + 'static)>,
 ) -> Result<Option<Draft>> {
     let Some(sink) = sink else {
         return Ok(None);
@@ -212,6 +221,7 @@ pub fn export(
             // a list of span ids would be bigger than the export.
             "spans": envelope.spans.len(),
         }),
+        evidence: vec![],
     }))
 }
 
@@ -350,6 +360,7 @@ mod tests {
         let experiment = experiments
             .submit(
                 Submission {
+                    max_cost: 0.1,
                     lineage_root: root.clone(),
                     config_ref: HashId::from_sha256([2; 32]),
                     budget_id: "b".into(),
@@ -388,6 +399,7 @@ mod tests {
         let experiment = experiments
             .submit(
                 Submission {
+                    max_cost: 0.1,
                     lineage_root: root.clone(),
                     config_ref: HashId::from_sha256([2; 32]),
                     budget_id: "b".into(),

@@ -7,6 +7,16 @@ license.workspace = true
 publish.workspace = true
 description = "C10: the evolution service — API, shard coordinator, job queue, stateless run workers, budget ledger, telemetry sink, read models and the management web interface."
 
+[features]
+default = []
+# The durable backends. Off by default so the dev profile needs no system
+# libraries; `backends::unbindable` reports per build what a given binary can
+# honour, so a release that wants Postgres is built with it rather than discovering
+# at run time that it cannot.
+postgres = ["agent-store/postgres"]
+s3 = ["agent-store/s3"]
+qdrant = ["agent-store/qdrant"]
+
 [dependencies]
 agent-contracts.workspace = true
 agent-core.workspace = true
@@ -14,6 +24,13 @@ agent-library.workspace = true
 agent-metrics.workspace = true
 agent-obs.workspace = true
 agent-promotion.workspace = true
+# The search half. S1 is where C5-C7 and C13 are *driven*: they are pure state
+# machines and the service is the only thing that holds a lease, a store and a
+# queue at once, which is what `s1::plugins` says out loud.
+agent-archive.workspace = true
+agent-meta-optimizer.workspace = true
+agent-optimizer.workspace = true
+agent-swarm.workspace = true
 agent-router.workspace = true
 agent-runtime.workspace = true
 agent-store.workspace = true
@@ -37,6 +54,9 @@ agent-s2.workspace = true
 agent-metrics.workspace = true
 agent-testkit.workspace = true
 proptest.workspace = true
+# The store-backed log seam's tests write a real log to a real directory, which is
+# the only way to show it outlives the process that wrote it.
+tempfile.workspace = true
 
 [[bin]]
 name = "agent-s1"
