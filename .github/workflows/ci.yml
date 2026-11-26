@@ -1,0 +1,88 @@
+# The gate docs/roadmap.md's "each milestone ends green with tests" has always
+# asserted and nothing has ever checked. Three jobs:
+#
+#   workspace  the suite that needs nothing external — the floor, on every push
+#   compose    C4's durable backends against the real stack, which is the only
+#              way the Postgres/S3/Qdrant code paths are exercised at all
+#   web        the SPA build, so "unbuilt" stops being the normal state
+#
+# The toolchain is whatever rust-toolchain.toml pins; rustup honours the file, so
+# no version is repeated here and the two cannot drift.
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  workspace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets
+      - run: cargo test --workspace
+
+  # The store's own integration tests. They are `#[ignore]`d by default because a
+  # box without the stack would fail them for the wrong reason; here the stack is
+  # present, so they run. `--test-threads=1` because they share one bucket and one
+  # database.
+  compose:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: agent
+          POSTGRES_PASSWORD: agent
+          POSTGRES_DB: agent
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U agent -d agent"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+      qdrant:
+        image: qdrant/qdrant:v1.12.4
+        ports: ["6333:6333"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      # Garage is not a GitHub service container: it needs its layout, bucket and
+      # key set up after it is up, which is what garage-init.sh does.
+      - name: Start Garage
+        run: |
+          docker compose up -d garage
+          sh garage-init.sh
+      - name: C4 against Postgres, Garage and Qdrant
+        env:
+          AGENT_STORE_PG: host=localhost port=5432 user=agent password=agent dbname=agent
+          AGENT_STORE_S3: http://localhost:59000
+          AGENT_STORE_QDRANT: http://localhost:6333
+        run: |
+          cargo test -p agent-store --features postgres,s3,qdrant \
+            -- --ignored --test-threads=1
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # `npm ci` once a lockfile is committed; until then the four direct deps are
+      # exact in package.json and the transitive tree is resolved fresh.
+      - run: npm install
+      - run: npm run check
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist

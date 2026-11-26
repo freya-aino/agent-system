@@ -1,0 +1,11 @@
+# rust-overlay so the toolchain comes from rust-toolchain.toml itself rather than
+# from whatever nixpkgs happens to call stable: docs/stack.md promises an exact
+# pinned version, and a second place naming it is a second place to drift.
+inputs:
+  nixpkgs:
+    url: github:cachix/devenv-nixpkgs/rolling
+  rust-overlay:
+    url: github:oxalica/rust-overlay
+    inputs:
+      nixpkgs:
+        follows: nixpkgs
