@@ -105,7 +105,10 @@ impl Reflection {
 
 /// The seam to whatever produces proposals. A model through the broker in a real
 /// deployment; a fixture in tests; a human-written diff in an experiment.
-pub trait Proposer {
+/// `Send`, for the same reason as [`crate::operators::Operator`]: an
+/// `LlmProposed<P>` is an operator, and an operator must be able to live in a
+/// service's writer task.
+pub trait Proposer: Send {
     /// The **hash of the model primitive** this proposer uses. A hash rather than
     /// a name: a proposal is only reproducible if the model that made it is pinned
     /// the same way every other model in the system is.

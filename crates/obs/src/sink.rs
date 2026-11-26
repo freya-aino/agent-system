@@ -81,6 +81,33 @@ pub struct Draft {
     pub kind: &'static str,
     pub subject: HashId,
     pub data: Value,
+    /// The objects this event rests on: the fitness records behind a selection, the
+    /// gate results behind an approval.
+    ///
+    /// Carried here rather than reconstructed later, because the component that
+    /// decided is the only one that knows what it decided *on*. C6 produces it
+    /// (`journal::Append`) and C4 stores it (`EventDraft`); without this field the
+    /// service sat between the two and dropped it, which would make an audit of
+    /// "why was this promoted" a search rather than a read.
+    pub evidence: Vec<HashId>,
+}
+
+impl Draft {
+    /// An event that rests on nothing beyond its own `data`. Most do.
+    pub fn new(kind: &'static str, subject: HashId, data: Value) -> Draft {
+        Draft {
+            kind,
+            subject,
+            data,
+            evidence: vec![],
+        }
+    }
+
+    /// An event that cites the objects behind it.
+    pub fn with_evidence(mut self, evidence: Vec<HashId>) -> Draft {
+        self.evidence = evidence;
+        self
+    }
 }
 
 /// The sink's state: what it has seen, per source.
@@ -200,6 +227,7 @@ impl Sink {
                 kind: "telemetry_gap",
                 subject: HashId::from_sha256([0; 32]),
                 data: serde_json::to_value(gap).unwrap_or(Value::Null),
+                evidence: vec![],
             });
         }
         Ok(Ingested {
@@ -258,6 +286,7 @@ fn inbound_events(envelope: &TelemetryEnvelope) -> Vec<Draft> {
             kind: known_kind(&event.kind),
             subject: event.subject.clone(),
             data: event.data.clone(),
+            evidence: vec![],
         });
     }
     for fitness in &envelope.fitness {
@@ -265,6 +294,7 @@ fn inbound_events(envelope: &TelemetryEnvelope) -> Vec<Draft> {
             kind: "experiment_outcome",
             subject: fitness.member.clone(),
             data: serde_json::to_value(fitness).unwrap_or(Value::Null),
+            evidence: vec![],
         });
     }
     out

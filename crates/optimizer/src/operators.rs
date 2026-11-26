@@ -91,7 +91,11 @@ impl OperatorCtx<'_> {
 }
 
 /// One variation operator.
-pub trait Operator {
+/// `Send`, because the service runs selection in a spawned task and therefore holds
+/// an `OperatorSet` across an await. Operators are pure functions of a parent and a
+/// seed, so there is nothing about them that wants to be thread-bound; the bound was
+/// simply missing until something outside a test ran one.
+pub trait Operator: Send {
     fn name(&self) -> &'static str;
     fn version(&self) -> &'static str {
         "1.0.0"

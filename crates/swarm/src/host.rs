@@ -22,7 +22,7 @@ use agent_runtime::exec::{Clock, SequentialExecutor};
 use agent_runtime::limits::CostModel;
 use agent_runtime::load::Closure;
 use agent_runtime::metered::BrokerCalls;
-use agent_runtime::provider::{ConnectorClient, NoSecrets, Provider};
+use agent_runtime::provider::{ConnectorClient, NoSecrets, Provider, SecretResolver};
 use serde_json::Value;
 
 use crate::error::SwarmError;
@@ -58,7 +58,14 @@ pub trait MemberRunner {
 /// `Closure::load` has already verified every object against the id it arrived under.
 /// The provider and connector are built per run by the factories, because a run must
 /// not inherit another run's recorded call log.
-pub struct LocalHost<'a, C: Clock, P: Provider, K: ConnectorClient> {
+///
+/// **The secret resolver is a parameter.** It used to be `NoSecrets`, hard-coded,
+/// which meant a Swarm hosted here could only reach endpoints that need no
+/// credential — the deterministic provider, or an unauthenticated local one. Any
+/// `model` primitive pinned to a real authenticated endpoint failed at its first
+/// call. `NoSecrets` stays the default, so a simulation says out loud that it has
+/// no credentials to leak, and a deployment supplies `HostSecretResolver`.
+pub struct LocalHost<'a, C: Clock, P: Provider, K: ConnectorClient, S: SecretResolver = NoSecrets> {
     closures: BTreeMap<HashId, Closure>,
     cost: &'a CostModel,
     clock: &'a C,
@@ -66,17 +73,36 @@ pub struct LocalHost<'a, C: Clock, P: Provider, K: ConnectorClient> {
     host_fns: Box<dyn Fn() -> HostFns + 'a>,
     provider: Box<dyn Fn() -> P + 'a>,
     connector: Box<dyn Fn() -> K + 'a>,
+    secrets: S,
     /// How many member runs this host has executed.
     runs: u64,
 }
 
-impl<'a, C: Clock, P: Provider, K: ConnectorClient> LocalHost<'a, C, P, K> {
+impl<'a, C: Clock, P: Provider, K: ConnectorClient> LocalHost<'a, C, P, K, NoSecrets> {
+    /// A host with no credentials. What a simulation wants, and what every caller
+    /// before credentials were resolvable got.
     pub fn new(
         cost: &'a CostModel,
         clock: &'a C,
         connections: ConnectionRegistry,
         provider: impl Fn() -> P + 'a,
         connector: impl Fn() -> K + 'a,
+    ) -> Self {
+        LocalHost::with_secrets(cost, clock, connections, provider, connector, NoSecrets)
+    }
+}
+
+impl<'a, C: Clock, P: Provider, K: ConnectorClient, S: SecretResolver> LocalHost<'a, C, P, K, S> {
+    /// A host that can reach an authenticated endpoint. The resolver is asked per
+    /// call by the broker, at the host edge, so the credential never enters a
+    /// closure, a frame or a Trace.
+    pub fn with_secrets(
+        cost: &'a CostModel,
+        clock: &'a C,
+        connections: ConnectionRegistry,
+        provider: impl Fn() -> P + 'a,
+        connector: impl Fn() -> K + 'a,
+        secrets: S,
     ) -> Self {
         LocalHost {
             closures: BTreeMap::new(),
@@ -86,6 +112,7 @@ impl<'a, C: Clock, P: Provider, K: ConnectorClient> LocalHost<'a, C, P, K> {
             host_fns: Box::new(HostFns::new),
             provider: Box::new(provider),
             connector: Box::new(connector),
+            secrets,
             runs: 0,
         }
     }
@@ -123,7 +150,9 @@ impl<'a, C: Clock, P: Provider, K: ConnectorClient> LocalHost<'a, C, P, K> {
     }
 }
 
-impl<C: Clock, P: Provider, K: ConnectorClient> MemberRunner for LocalHost<'_, C, P, K> {
+impl<C: Clock, P: Provider, K: ConnectorClient, S: SecretResolver> MemberRunner
+    for LocalHost<'_, C, P, K, S>
+{
     fn run(
         &mut self,
         unit: &HashId,
@@ -139,7 +168,7 @@ impl<C: Clock, P: Provider, K: ConnectorClient> MemberRunner for LocalHost<'_, C
             .get(unit)
             .ok_or_else(|| SwarmError::ClosureMissing { unit: unit.clone() })?;
 
-        let broker = Broker::new(&self.connections, self.clock, &NoSecrets);
+        let broker = Broker::new(&self.connections, self.clock, &self.secrets);
         let calls = BrokerCalls::new(broker, (self.provider)(), (self.connector)());
         let mut driver = LocalDriver::new(
             closure,

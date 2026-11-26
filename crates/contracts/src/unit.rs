@@ -58,6 +58,14 @@ pub struct Unit {
 /// resolve it.
 pub const WORKLOAD_SLOT: &str = "workload";
 
+/// The L3 role slot holding the Unit under test.
+///
+/// The slot a search *varies*: a candidate occupies it and everything else about
+/// the environment is held constant, which is what makes a comparison paired. It is
+/// a convention rather than a mechanism, so it belongs here with `WORKLOAD_SLOT`
+/// rather than being spelled out again in every crate that fills it.
+pub const SUBJECT_SLOT: &str = "subject";
+
 /// Whether `slot` of a Unit at `level` is a reserved data binding rather than a
 /// closure member. Only L3 has any.
 pub fn is_data_slot(level: u8, slot: &str) -> bool {

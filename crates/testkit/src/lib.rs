@@ -50,7 +50,7 @@ use serde_json::json;
 pub const CONNECTION: &str = "fake";
 pub const MODEL_A: &str = "fake-model-1";
 pub const MODEL_B: &str = "fake-model-2";
-pub const SUBJECT_SLOT: &str = "subject";
+pub use agent_contracts::unit::SUBJECT_SLOT;
 
 // ---------------------------------------------------------------------------
 // The environment
