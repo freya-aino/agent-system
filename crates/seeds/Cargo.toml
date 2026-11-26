@@ -11,6 +11,13 @@ description = "The seed set: several dedicated Agents, the on-disk format, and t
 agent-contracts.workspace = true
 agent-core.workspace = true
 agent-library.workspace = true
+# For the metric definitions the seed Swarm names: a seed set that shipped its own
+# copy of completion_rate would be a second definition under a different hash.
+agent-metrics.workspace = true
+# The store, for the `import` sink. The importer's seam stayed free of C4; only this
+# one module knows about it.
+agent-store.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -21,3 +28,5 @@ path = "src/bin/seeds.rs"
 
 [dev-dependencies]
 proptest.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }
+tempfile.workspace = true

@@ -1,0 +1,1 @@
+{"aggregator":"mean","code_primitives":[],"direction":"min","hash_spec":1,"inputs":{"checkers":[],"trace_fields":[],"unit_fields":["nodes"]},"kind":"size","level":"agent","live_eligible":false,"name":"graph_nodes","version":"1.0.0"}

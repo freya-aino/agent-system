@@ -1,0 +1,1 @@
+{"aggregator":"mean","code_primitives":[],"direction":"max","hash_spec":1,"inputs":{"checkers":[],"trace_fields":["summary.completion"],"unit_fields":[]},"kind":"quality","level":"agent","live_eligible":true,"name":"completion_rate","version":"1.0.0"}

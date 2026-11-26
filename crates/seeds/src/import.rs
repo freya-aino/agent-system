@@ -23,17 +23,35 @@ use serde_json::Value;
 use crate::error::SeedError;
 use crate::format::{Loaded, Object};
 
+/// A future returned by the sink.
+///
+/// Boxed rather than `impl Future`, because an import holds the sink as
+/// `&mut dyn Sink` — the importer must not be generic over where it writes — and a
+/// return-position `impl Future` is not dyn-compatible.
+pub type SinkFuture<'a, T> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, SeedError>> + Send + 'a>>;
+
 /// Where an import writes. The seam keeps this crate free of the store and makes
 /// the "already present" question explicit.
+///
+/// **Async, because the only real sink is C4's store**, whose backends are Postgres
+/// over `tokio-postgres` and S3 over `hyper`. The seam was sync, so the only thing
+/// that could satisfy it was the in-memory one — which is why `agent-seeds` could
+/// verify a set and never load one.
 pub trait Sink {
     /// Whether the store already holds this object.
-    fn has(&self, id: &HashId) -> bool;
-    /// Put the canonical bytes under their own hash.
-    fn put(&mut self, id: &HashId, bytes: &[u8]) -> Result<(), SeedError>;
+    fn has<'a>(&'a self, id: &'a HashId) -> SinkFuture<'a, bool>;
+    /// Put an object under its own hash.
+    ///
+    /// The bytes are `canon::object_bytes(tag, value)` — the projection whose digest
+    /// **is** the id. Not the object's file contents: a seed file holds readable
+    /// JSON with the domain-tag prefix stripped, and those bytes hash to something
+    /// else entirely.
+    fn put<'a>(&'a mut self, object: &'a Object) -> SinkFuture<'a, ()>;
     /// Whether this seed set has already been committed here.
-    fn imported(&self, set: &HashId) -> bool;
+    fn imported<'a>(&'a self, set: &'a HashId) -> SinkFuture<'a, bool>;
     /// Append `committed` for one seed, with its starting evaluation.
-    fn commit(&mut self, set: &HashId, seed: &Seed) -> Result<(), SeedError>;
+    fn commit<'a>(&'a mut self, set: &'a HashId, seed: &'a Seed) -> SinkFuture<'a, ()>;
 }
 
 /// An in-memory sink: the dev profile's, and what the tests use.
@@ -45,23 +63,29 @@ pub struct MemorySink {
 }
 
 impl Sink for MemorySink {
-    fn has(&self, id: &HashId) -> bool {
-        self.objects.contains_key(id.as_str())
+    fn has<'a>(&'a self, id: &'a HashId) -> SinkFuture<'a, bool> {
+        Box::pin(async move { Ok(self.objects.contains_key(id.as_str())) })
     }
 
-    fn put(&mut self, id: &HashId, bytes: &[u8]) -> Result<(), SeedError> {
-        self.objects.insert(id.as_str().to_owned(), bytes.to_vec());
-        Ok(())
+    fn put<'a>(&'a mut self, object: &'a Object) -> SinkFuture<'a, ()> {
+        Box::pin(async move {
+            let bytes = agent_core::canon::object_bytes(object.tag, &object.value)
+                .map_err(|d| SeedError::NotCanonical { detail: d.message })?;
+            self.objects.insert(object.id.as_str().to_owned(), bytes);
+            Ok(())
+        })
     }
 
-    fn imported(&self, set: &HashId) -> bool {
-        self.sets.contains(set.as_str())
+    fn imported<'a>(&'a self, set: &'a HashId) -> SinkFuture<'a, bool> {
+        Box::pin(async move { Ok(self.sets.contains(set.as_str())) })
     }
 
-    fn commit(&mut self, set: &HashId, seed: &Seed) -> Result<(), SeedError> {
-        self.committed.push((set.as_str().to_owned(), seed.clone()));
-        self.sets.insert(set.as_str().to_owned());
-        Ok(())
+    fn commit<'a>(&'a mut self, set: &'a HashId, seed: &'a Seed) -> SinkFuture<'a, ()> {
+        Box::pin(async move {
+            self.committed.push((set.as_str().to_owned(), seed.clone()));
+            self.sets.insert(set.as_str().to_owned());
+            Ok(())
+        })
     }
 }
 
@@ -202,9 +226,9 @@ pub fn validate(loaded: &Loaded) -> Result<(), SeedError> {
 }
 
 /// Import a set.
-pub fn import(loaded: &Loaded, sink: &mut dyn Sink) -> Result<Imported, SeedError> {
+pub async fn import(loaded: &Loaded, sink: &mut dyn Sink) -> Result<Imported, SeedError> {
     validate(loaded)?;
-    if sink.imported(&loaded.manifest.id) {
+    if sink.imported(&loaded.manifest.id).await? {
         // The whole point of the set's id being its content: this question needs
         // no bookkeeping.
         return Ok(Imported {
@@ -214,16 +238,19 @@ pub fn import(loaded: &Loaded, sink: &mut dyn Sink) -> Result<Imported, SeedErro
         });
     }
     let mut report = Imported::default();
-    for object in order(&loaded.objects)? {
-        if sink.has(&object.id) {
+    // Dependency order: anything an object references is put first, so the store
+    // never holds an object whose closure is incomplete.
+    let ordered: Vec<Object> = order(&loaded.objects)?.into_iter().cloned().collect();
+    for object in &ordered {
+        if sink.has(&object.id).await? {
             report.objects_present += 1;
             continue;
         }
-        sink.put(&object.id, &object.bytes)?;
+        sink.put(object).await?;
         report.objects_put += 1;
     }
     for seed in &loaded.manifest.seeds {
-        sink.commit(&loaded.manifest.id, seed)?;
+        sink.commit(&loaded.manifest.id, seed).await?;
         report.seeds_committed += 1;
     }
     Ok(report)
@@ -305,13 +332,13 @@ mod tests {
         assert!(position(&node.id) < position(&agent.id));
     }
 
-    #[test]
-    fn an_import_puts_everything_and_commits_each_seed() {
+    #[tokio::test]
+    async fn an_import_puts_everything_and_commits_each_seed() {
         let prompt = primitive("helpful");
         let node = unit(1, vec![&prompt.id]);
         let loaded = set(vec![prompt, node.clone()], &node.id);
         let mut sink = MemorySink::default();
-        let report = import(&loaded, &mut sink).unwrap();
+        let report = import(&loaded, &mut sink).await.unwrap();
         assert_eq!(report.objects_put, 2);
         assert_eq!(report.seeds_committed, 1);
         assert!(!report.no_op);
@@ -319,14 +346,14 @@ mod tests {
         assert_eq!(sink.committed[0].1.purpose, "assistant");
     }
 
-    #[test]
-    fn re_importing_the_same_set_is_a_no_op() {
+    #[tokio::test]
+    async fn re_importing_the_same_set_is_a_no_op() {
         let prompt = primitive("helpful");
         let node = unit(1, vec![&prompt.id]);
         let loaded = set(vec![prompt, node.clone()], &node.id);
         let mut sink = MemorySink::default();
-        import(&loaded, &mut sink).unwrap();
-        let again = import(&loaded, &mut sink).unwrap();
+        import(&loaded, &mut sink).await.unwrap();
+        let again = import(&loaded, &mut sink).await.unwrap();
         assert!(again.no_op);
         assert_eq!(again.objects_put, 0);
         assert_eq!(again.seeds_committed, 0);
@@ -337,20 +364,20 @@ mod tests {
         );
     }
 
-    #[test]
-    fn an_object_already_in_the_store_is_not_put_again() {
+    #[tokio::test]
+    async fn an_object_already_in_the_store_is_not_put_again() {
         let prompt = primitive("helpful");
         let node = unit(1, vec![&prompt.id]);
         let mut sink = MemorySink::default();
-        sink.put(&prompt.id, &prompt.bytes).unwrap();
+        sink.put(&prompt).await.unwrap();
         let loaded = set(vec![prompt, node.clone()], &node.id);
-        let report = import(&loaded, &mut sink).unwrap();
+        let report = import(&loaded, &mut sink).await.unwrap();
         assert_eq!(report.objects_present, 1);
         assert_eq!(report.objects_put, 1);
     }
 
-    #[test]
-    fn a_set_that_does_not_ship_its_own_seed_unit_is_refused_whole() {
+    #[tokio::test]
+    async fn a_set_that_does_not_ship_its_own_seed_unit_is_refused_whole() {
         let prompt = primitive("helpful");
         let loaded = set(vec![prompt], &HashId::from_sha256([9; 32]));
         let err = validate(&loaded).unwrap_err();
@@ -359,7 +386,7 @@ mod tests {
             "half a seed set is a population with a dangling lineage: {err}"
         );
         let mut sink = MemorySink::default();
-        assert!(import(&loaded, &mut sink).is_err());
+        assert!(import(&loaded, &mut sink).await.is_err());
         assert!(sink.objects.is_empty(), "all or nothing");
     }
 

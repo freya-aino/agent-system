@@ -30,10 +30,11 @@ use agent_contracts::events::Seed;
 use agent_contracts::primitive::{Primitive, PrimitiveKind, ReadOnlyTrue};
 use agent_contracts::types::HashId;
 use agent_contracts::unit::{
-    Completion, ConnectorBinding, ConnectorKind, FunctionDescriptor, FunctionScope, Limits, Unit,
+    Completion, ConnectorBinding, ConnectorKind, FunctionDescriptor, FunctionScope, Limits,
+    Mutability, SUBJECT_SLOT, Unit,
 };
-use agent_core::canon::{self, DomainTag};
-use agent_library::builder::{AgentBuilder, EdgeOpts, NodeBuilder, NodeClass};
+use agent_core::canon::DomainTag;
+use agent_library::builder::{AgentBuilder, EdgeOpts, NodeBuilder, NodeClass, SwarmBuilder};
 use agent_library::hashing::{hash_primitive, hash_unit};
 use agent_library::primitive::{define_primitive, schema_primitive, schema_ref_of};
 use serde_json::{Value, json};
@@ -128,6 +129,15 @@ impl Workshop {
             detail: format!("{e}"),
         })?;
         self.objects.push(verify(&id, &value)?);
+        Ok(id)
+    }
+
+    /// An object whose domain is stated rather than inferred: a dataset, a metric,
+    /// a price table, an evaluation.
+    fn tagged(&mut self, tag: DomainTag, value: Value) -> Result<HashId, SeedError> {
+        let object = crate::format::object_of(tag, value)?;
+        let id = object.id.clone();
+        self.objects.push(object);
         Ok(id)
     }
 
@@ -361,13 +371,154 @@ pub fn first_batch() -> Result<Batch, SeedError> {
             .build(),
     )?;
 
-    // The starting evaluation each seed is committed with. A reference, not an
-    // inline object: the suites are content and live in the store.
-    let evaluation = canon::hash(
-        DomainTag::Dataset,
-        &json!({"suites": ["seed-smoke"], "replicates": 3}),
-    )
-    .map_err(|d| SeedError::NotCanonical { detail: d.message })?;
+    // ---- what makes the set runnable, not just importable ---------------------
+    //
+    // Three Agents are not a loop. A search needs an *environment* — C13's Swarm,
+    // which carries the workload and the metric refs — plus the metric definitions
+    // those refs name and a price table to cost the runs under. None of that
+    // shipped, so the seeds imported and then sat there: there was nothing to
+    // evaluate them in.
+
+    // The price table. Costs are derived from the Traces against this, never
+    // self-reported, and C3 refuses a comparison spanning two tables because
+    // cheap-model substitution would otherwise look like a win.
+    let price_table_value = json!({
+        "id": HashId::from_sha256([0; 32]).as_str(),
+        "entries": [{
+            "connection": CONNECTION,
+            "model_id": MODEL_ID,
+            "in_per_mtok": "2.50",
+            "out_per_mtok": "10.00",
+        }],
+        "currency": "USD",
+        "effective_from": 0,
+    });
+    let price_table = shop.tagged(DomainTag::PriceTable, price_table_value.clone())?;
+
+    // The metric. `completion_rate` is programmatic and payload-blind: it asks
+    // whether a run finished, which needs no labels and no judge. That is the only
+    // honest metric to ship, because a *quality* metric needs a hand-labelled
+    // corpus to calibrate against and none exists (docs/roadmap.md). A seed set
+    // that shipped a quality metric with no labels would be shipping a number
+    // nobody had earned.
+    // Three metrics, all programmatic and payload-blind, because **one metric is
+    // not a search.** With completion alone every candidate that finishes scores
+    // the same, the Pareto front is everything, and selection has nothing to
+    // discriminate on — so no candidate stays on the front long enough to become
+    // stable and nothing is ever proposed. Cost and size are what give the funnel
+    // its direction, and they are exactly the vertical slice's success criterion:
+    // "non-inferior in quality and measurably smaller or cheaper".
+    let defs = [
+        agent_metrics::def::completion_rate(),
+        agent_metrics::def::cost(),
+        agent_metrics::def::size("graph_nodes", "nodes"),
+    ];
+    let mut metric_refs = vec![];
+    for def in &defs {
+        let value = serde_json::to_value(def).map_err(|e| SeedError::Unrecognised {
+            detail: format!("{e}"),
+        })?;
+        metric_refs.push(shop.tagged(DomainTag::Metric, value)?);
+    }
+    let completion_ref = metric_refs[0].clone();
+
+    // The smoke workloads. Inputs only: `completion_rate` reads no payload, so there
+    // are no expected answers here to get wrong. Their purpose is "does the loop
+    // run", which is exactly what the metric measures.
+    //
+    // **Three of them, because a promotion needs three.** C6 refuses to propose a
+    // candidate whose evidence covers fewer than `SWARM_VARIATIONS` variations of
+    // the environment — one measured in a single environment has not shown it
+    // generalises — so a set shipping one environment could be searched and never
+    // promote anything. They differ in what they ask, not in how it is scored: the
+    // same metric, so the numbers pool.
+    let variations: [Value; 3] = [
+        json!([
+            {"task": "facts-1", "input": "What is the capital of France?"},
+            {"task": "facts-2", "input": "In what year did the Bretton Woods system end?"},
+            {"task": "facts-3", "input": "Which ocean lies east of Madagascar?"},
+            {"task": "facts-4", "input": "What does a Fresnel lens do?"},
+        ]),
+        json!([
+            {"task": "reason-1", "input": "Convert 12 miles to kilometres and show the working."},
+            {"task": "reason-2", "input": "A train leaves at 09:40 and arrives at 13:15. How long is the journey?"},
+            {"task": "reason-3", "input": "Order these by magnitude: 2^10, 10^3, 3^7."},
+            {"task": "reason-4", "input": "A tap fills a tank in 6 hours, another in 3. How long together?"},
+        ]),
+        json!([
+            {"task": "open-1", "input": "Summarise the causes of the 1929 crash."},
+            {"task": "open-2", "input": "Explain why a spring tide is higher than a neap tide."},
+            {"task": "open-3", "input": "Describe the trade-off between latency and throughput."},
+            {"task": "open-4", "input": "What makes a good postmortem?"},
+        ]),
+    ];
+
+    // One Swarm per variation: the subject slot is what a search varies, and
+    // everything else about each environment is held constant, which is what makes
+    // a comparison paired.
+    //
+    // **Only the assistant gets them.** The research seed's retrieval node needs a
+    // live pinned connector and the document seed needs documents; neither can be
+    // evaluated offline without inventing a corpus, so shipping environments for
+    // them would ship two nobody can run.
+    let mut swarms = vec![];
+    let mut workloads = vec![];
+    for items in &variations {
+        let workload = shop.tagged(DomainTag::Dataset, items.clone())?;
+        let mut builder = SwarmBuilder::new(("in", str_ref.clone()), ("out", str_ref.clone()))
+            .slot(SUBJECT_SLOT, assistant.clone(), Mutability::Subject)
+            .workload(workload.clone());
+        for metric in &metric_refs {
+            builder = builder.metric(metric.clone());
+        }
+        let swarm = shop.unit(
+            builder
+                .entry(&[SUBJECT_SLOT])
+                .exit(&[SUBJECT_SLOT])
+                .policy(limits(1.0, 300_000, 32_768, 16, 4))
+                .build(),
+        )?;
+        workloads.push(workload);
+        swarms.push(swarm);
+    }
+    let workload = workloads[0].clone();
+    let swarm = swarms[0].clone();
+
+    // The starting evaluation each seed is committed with — now an object the set
+    // actually ships, rather than the hash of an inline blob nothing resolved.
+    let evaluation_value = json!({
+        "id": HashId::from_sha256([0; 32]).as_str(),
+        "swarm": swarm.as_str(),
+        "dataset": workload.as_str(),
+        // Every variation, so the `Evaluation` names the whole environment a number
+        // came from rather than only the first of it.
+        "baselines": swarms.iter().map(HashId::as_str).collect::<Vec<_>>(),
+        "metrics": metric_refs.iter().map(HashId::as_str).collect::<Vec<_>>(),
+        "fitness_spec": {
+            "constraints": [],
+            // Quality up, cost and size down: each metric in the direction its own
+            // definition declares, which is what makes "smaller or cheaper at equal
+            // quality" a thing selection can find.
+            "objectives": defs
+                .iter()
+                .zip(&metric_refs)
+                .map(|(def, metric)| json!({
+                    "metric": metric.as_str(),
+                    "direction": def.direction,
+                }))
+                .collect::<Vec<_>>(),
+            "quality_floor": {
+                "metric": completion_ref.as_str(),
+                "margin": 0.02,
+                "test": {"kind": "paired_bootstrap", "alpha": 0.05, "correction": "holm"},
+            },
+            "size_metrics": [],
+        },
+        "seeds": [1, 2, 3],
+        "variant": {"suite": "seed-smoke", "kind": "train", "seed": 42},
+    });
+    let evaluation = shop.tagged(DomainTag::Dataset, evaluation_value)?;
+    let _ = price_table;
 
     let seeds = vec![
         Seed {

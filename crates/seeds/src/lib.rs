@@ -26,5 +26,6 @@ pub mod batch;
 pub mod error;
 pub mod format;
 pub mod import;
+pub mod store_sink;
 
 pub use error::SeedError;

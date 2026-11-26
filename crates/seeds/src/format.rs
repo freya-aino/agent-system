@@ -29,6 +29,7 @@
 //! exactly C0's projection, so a file's name means the same thing to this importer,
 //! to C1 when it built the object, and to C2 when it verifies a closure.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use agent_contracts::events::SeedSet;
@@ -59,20 +60,46 @@ pub fn id_of_file(name: &str) -> Option<HashId> {
 /// Read from the object rather than from the file name, so a file cannot claim to
 /// be a Unit and hash as a Primitive.
 pub fn tag_of(object: &Value) -> Result<DomainTag, SeedError> {
-    if object.get("kind").and_then(Value::as_str).is_some() && object.get("body").is_some() {
-        return Ok(DomainTag::Primitive);
+    // Units and Primitives are C0's question, asked in C0's words: there used to be
+    // a second answer here, keyed on `kind`+`body` rather than `body_schema`, and
+    // two implementations of "what is this object" is one too many.
+    if let Some(tag) = canon::tag_of(object) {
+        return Ok(tag);
     }
-    if object.get("level").is_some() && object.get("interface").is_some() {
-        return Ok(DomainTag::Unit);
+    // A workload is an array of items, and it is the only array-shaped object a set
+    // ships.
+    if object.is_array() {
+        return Ok(DomainTag::Dataset);
     }
-    if object.get("suites").is_some() || object.get("metrics").is_some() {
+    if object.get("entries").is_some() && object.get("currency").is_some() {
+        return Ok(DomainTag::PriceTable);
+    }
+    if object.get("aggregator").is_some() {
+        return Ok(DomainTag::Metric);
+    }
+    if object.get("fitness_spec").is_some() || object.get("suites").is_some() {
         return Ok(DomainTag::Dataset);
     }
     if object.get("$schema").is_some() || object.get("properties").is_some() {
         return Ok(DomainTag::Manifest);
     }
     Err(SeedError::Unrecognised {
-        detail: "an object that is not a Unit, Primitive, Evaluation or schema".to_owned(),
+        detail: "an object that is not a Unit, Primitive, Dataset, Metric, PriceTable or schema"
+            .to_owned(),
+    })
+}
+
+/// One object with its domain stated rather than inferred.
+///
+/// A builder knows what it is making; only a *reader* has to ask. Using this on the
+/// way in keeps a new domain from depending on `tag_of` guessing it correctly.
+pub fn object_of(tag: DomainTag, value: Value) -> Result<Object, SeedError> {
+    let id = id_for(tag, &value)?;
+    Ok(Object {
+        bytes: canonical_bytes(tag, &value)?,
+        id,
+        tag,
+        value,
     })
 }
 
@@ -82,7 +109,14 @@ pub struct Object {
     pub id: HashId,
     pub tag: DomainTag,
     pub value: Value,
-    /// The canonical bytes, which are what gets `put`.
+    /// The object's **file** bytes: the canonical encoding with its domain-tag
+    /// prefix stripped, so a seed file is readable JSON.
+    ///
+    /// **Not what gets `put`.** The store is addressed by `sha256(bytes)` and the
+    /// digest equal to an object's id is of the *prefixed* encoding, so a sink
+    /// converts with `canon::object_bytes` rather than writing these
+    /// (`import::Sink::put`). These two being different is why the importer is
+    /// handed the whole `Object`.
     pub bytes: Vec<u8>,
 }
 
@@ -239,6 +273,33 @@ pub fn write(root: &Path, loaded: &Loaded) -> Result<(), SeedError> {
             detail: format!("{e}"),
         })?;
     }
+
+    // Remove objects the manifest no longer reaches.
+    //
+    // Without this a rebuild only ever *adds*, so the directory accumulates orphans
+    // from every earlier build and what `verify` reports depends on build history
+    // rather than on the set. A seed set is content-addressed; a directory holding
+    // objects nothing references is not that set.
+    let wanted: BTreeSet<String> = loaded
+        .objects
+        .iter()
+        .map(|object| object_file(&object.id))
+        .collect();
+    let entries = std::fs::read_dir(layout.objects()).map_err(|e| SeedError::Io {
+        path: layout.objects().display().to_string(),
+        detail: format!("{e}"),
+    })?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        // Only files this format owns: a directory that also held something else is
+        // not something to tidy up on the author's behalf.
+        if id_of_file(&name).is_some() && !wanted.contains(&name) {
+            std::fs::remove_file(entry.path()).map_err(|e| SeedError::Io {
+                path: entry.path().display().to_string(),
+                detail: format!("{e}"),
+            })?;
+        }
+    }
     Ok(())
 }
 
@@ -281,6 +342,36 @@ mod tests {
             matches!(err, SeedError::HashMismatch { .. }),
             "no trust in the transport: {err}"
         );
+    }
+
+    /// A rebuild removes what the manifest no longer reaches. Without this the
+    /// directory only ever grows, and what `verify` reports depends on build
+    /// history rather than on the set.
+    #[test]
+    fn a_rebuild_removes_orphaned_objects() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let batch = crate::batch::first_batch().expect("the batch");
+        write(dir.path(), &batch.loaded).expect("the first write");
+        let before = std::fs::read_dir(Layout::new(dir.path()).objects())
+            .expect("the objects")
+            .count();
+
+        // An object from an earlier build that nothing references any more.
+        let orphan = Layout::new(dir.path()).object(&HashId::from_sha256([0xAB; 32]));
+        std::fs::write(&orphan, b"{}").expect("the orphan");
+        assert!(orphan.exists());
+
+        write(dir.path(), &batch.loaded).expect("the second write");
+        assert!(!orphan.exists(), "a rebuild does not leave it behind");
+        assert_eq!(
+            std::fs::read_dir(Layout::new(dir.path()).objects())
+                .expect("the objects")
+                .count(),
+            before,
+            "and writes exactly the set"
+        );
+        let loaded = load(dir.path()).expect("the set still loads");
+        assert_eq!(loaded.objects.len(), batch.loaded.objects.len());
     }
 
     #[test]

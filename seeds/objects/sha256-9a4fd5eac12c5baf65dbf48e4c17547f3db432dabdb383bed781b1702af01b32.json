@@ -1,0 +1,1 @@
+{"aggregator":"mean","code_primitives":[],"direction":"min","hash_spec":1,"inputs":{"checkers":[],"trace_fields":["summary.cost"],"unit_fields":[]},"kind":"cost","level":"agent","live_eligible":true,"name":"cost","version":"1.0.0"}
