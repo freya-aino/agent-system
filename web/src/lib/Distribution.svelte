@@ -5,7 +5,9 @@
   // `n` is not optional here: the component refuses to render without it rather
   // than drawing a confident-looking bar over nothing. That refusal is the point —
   // it makes an under-evidenced comparison impossible to show by accident.
+  /** @type {{ mean?: number, n?: number, bootstrap_ci?: { lo: number, hi: number } } | null} */
   export let distribution = null
+  /** @type {number | null} */
   export let n = null
   export let label = ''
 

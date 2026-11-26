@@ -16,12 +16,33 @@
   let outcome = null
   let busy = false
 
+  // The defaults bundle.md fixes (contracts: CapacityPolicy::default). A fresh
+  // deployment has issued no policy, so there is nothing to copy from and the form
+  // still has to render: without these the nested `slo` is undefined and the first
+  // binding throws before anything is drawn.
+  const DEFAULT_CAPACITY = {
+    slo: { metric: 'ttft_ms', target_p99: 2000 },
+    front_reserve: 0.8,
+    internal_max: 0.2,
+    internal_min: 0.0,
+    shadow_share: 0.05,
+    preempt_grace_ms: 1000,
+  }
+
   function start(data) {
     if (draft) return draft
-    const source = data.draft ?? data.in_force ?? { deployments: [], capacity: null }
+    const source = data.draft ?? data.in_force ?? {}
+    const capacity = source.capacity ?? data.in_force?.capacity ?? {}
     draft = {
       deployments: (source.deployments ?? []).map((d) => ({ ...d })),
-      capacity: { ...(source.capacity ?? data.in_force?.capacity ?? {}) },
+      // Deep, not shallow: a spread shares the nested `slo` with the object the
+      // poll replaces every 20 s, so editing the SLO target would mutate the
+      // fetched read model and the next poll would discard the edit.
+      capacity: {
+        ...DEFAULT_CAPACITY,
+        ...capacity,
+        slo: { ...DEFAULT_CAPACITY.slo, ...(capacity.slo ?? {}) },
+      },
     }
     return draft
   }
@@ -52,7 +73,10 @@
 {/if}
 
 <Fetch load={policy} every={20000} let:data let:refresh>
-  {@const working = start(data)}
+  <!-- `start(data)` fills the module-level `draft` before the body renders. The
+       body binds to `draft` rather than to a local: Svelte cannot bind to a
+       variable declared with {@const}, which is why this page never compiled. -->
+  {#if start(data)}
 
   <h3>In force</h3>
   {#if data.in_force}
@@ -81,7 +105,7 @@
       <tr><th>deployment</th><th>state</th><th>share</th></tr>
     </thead>
     <tbody>
-      {#each working.deployments as deployment}
+      {#each draft.deployments as deployment}
         <tr>
           <td><code title={deployment.root}>{short(deployment.root)}</code></td>
           <td>
@@ -114,27 +138,27 @@
   <div class="bounds">
     <label>
       SLO target p99 (ms)
-      <input type="number" min="1" bind:value={working.capacity.slo.target_p99} />
+      <input type="number" min="1" bind:value={draft.capacity.slo.target_p99} />
     </label>
     <label>
       front-facing reserve
-      <input type="number" min="0" max="1" step="0.05" bind:value={working.capacity.front_reserve} />
+      <input type="number" min="0" max="1" step="0.05" bind:value={draft.capacity.front_reserve} />
     </label>
     <label>
       internal ceiling
-      <input type="number" min="0" max="1" step="0.05" bind:value={working.capacity.internal_max} />
+      <input type="number" min="0" max="1" step="0.05" bind:value={draft.capacity.internal_max} />
     </label>
     <label>
       internal floor
-      <input type="number" min="0" max="1" step="0.05" bind:value={working.capacity.internal_min} />
+      <input type="number" min="0" max="1" step="0.05" bind:value={draft.capacity.internal_min} />
     </label>
     <label>
       shadow share
-      <input type="number" min="0" max="1" step="0.01" bind:value={working.capacity.shadow_share} />
+      <input type="number" min="0" max="1" step="0.01" bind:value={draft.capacity.shadow_share} />
     </label>
     <label>
       preempt grace (ms)
-      <input type="number" min="0" bind:value={working.capacity.preempt_grace_ms} />
+      <input type="number" min="0" bind:value={draft.capacity.preempt_grace_ms} />
     </label>
   </div>
 
@@ -147,8 +171,9 @@
     </ul>
   {/if}
 
-  <button disabled={busy} on:click={() => save(refresh)}>Sign and publish</button>
-  <button class="ghost" on:click={() => (draft = null)}>Discard draft</button>
+    <button disabled={busy} on:click={() => save(refresh)}>Sign and publish</button>
+    <button class="ghost" on:click={() => (draft = null)}>Discard draft</button>
+  {/if}
 </Fetch>
 
 <style>

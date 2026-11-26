@@ -1,6 +1,8 @@
 <script>
   // A series as inline SVG. Twenty lines against a charting dependency.
+  /** @type {(number | null)[]} */
   export let points = []
+  /** @type {number | null} */
   export let target = null
   export let height = 40
   export let width = 240

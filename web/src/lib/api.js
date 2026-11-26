@@ -41,6 +41,26 @@ export function idempotencyKey(intent) {
   return `${intent}:${random}`
 }
 
+/// The service's error shape, as a type rather than three properties stapled onto
+/// an `Error`: every handler answers with `{code, detail, retryable}`, and the UI
+/// repeats `retryable` rather than deciding for itself whether a retry can help.
+export class ApiError extends Error {
+  /**
+   * @param {string} method
+   * @param {string} path
+   * @param {number} status
+   * @param {any} parsed
+   */
+  constructor(method, path, status, parsed) {
+    const body = parsed && parsed.error
+    super((body && body.detail) || `${method} ${path} failed`)
+    this.name = 'ApiError'
+    this.status = status
+    this.retryable = Boolean(body && body.retryable)
+    this.code = body && body.code
+  }
+}
+
 async function request(method, path, body) {
   const headers = { accept: 'application/json' }
   const current = token()
@@ -54,15 +74,7 @@ async function request(method, path, body) {
   const text = await response.text()
   const parsed = text ? JSON.parse(text) : null
   if (!response.ok) {
-    const error = new Error(
-      (parsed && parsed.error && parsed.error.detail) || `${method} ${path} failed`,
-    )
-    error.status = response.status
-    // The service says whether a retry can help; the UI repeats that rather than
-    // deciding.
-    error.retryable = Boolean(parsed && parsed.error && parsed.error.retryable)
-    error.code = parsed && parsed.error && parsed.error.code
-    throw error
+    throw new ApiError(method, path, response.status, parsed)
   }
   return parsed
 }
