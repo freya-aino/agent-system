@@ -122,5 +122,15 @@ toolchain as `rust-toolchain.toml`, and the compose services are the two binarie
 with a shared registry volume. No build tool, no entrypoint script, no process
 supervisor: a container that runs one binary needs none of them.
 
+**Activated by S1's store, evaluator and selection loop (2026-11-25), none new.**
+Binding C4's backends, implementing C6's `Evaluator` over C13 and driving `step`
+added only *internal* crate edges — `agent-s1` now depends on `agent-archive`,
+`agent-meta-optimizer`, `agent-optimizer`, `agent-swarm` and actually imports
+`agent-store`, `agent-library` and `agent-runtime`, which it had declared and never
+used. Workspace crates do not count against the cap. The durable backends stay
+behind the `postgres`/`s3`/`qdrant` features of `agent-store`, so a dev build links
+none of their dependencies. The one new *dev*-dependency is `tempfile`, already in
+the workspace and already allocated.
+
 Headroom: 6. Likely first additions if needed: a compression crate for blobs, and a regex crate if the
 hand-written anchored matcher in the guard DSL and `Subsumes` proves insufficient.

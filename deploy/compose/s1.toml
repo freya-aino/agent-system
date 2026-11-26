@@ -13,7 +13,7 @@ profile = "dev"
 node = "s1-compose"
 bind = "0.0.0.0:8080"
 
-# Disk, sqlite, the in-process queue and exact vector search: **what this build's
+# Disk objects, the disk log, the in-process queue and exact vector search: **what this build's
 # binary actually binds**. The Postgres, Garage and Qdrant services in the stack are
 # up for the store's own `--ignored` tests (C4), and the day `agent-s1` constructs
 # those backends this file changes to use them — until then it would be a config
@@ -24,7 +24,7 @@ backend = "disk"
 root = "/srv/registry/objects"
 
 [control]
-backend = "sqlite"
+backend = "disk"
 dsn = "/srv/registry/control.db"
 
 [queue]

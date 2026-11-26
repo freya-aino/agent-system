@@ -12,24 +12,67 @@ The implementation is in this repository, milestone by milestone through M8
 ```sh
 cargo test --workspace            # the whole suite; needs nothing external
 cargo run -p agent-s1 -- --dev /tmp/s1
-#   the API, the writer loop and the management UI on 127.0.0.1:8080
+#   the API, the writer tick and the management UI on 127.0.0.1:8080
 #   dev tokens for each role are printed at start-up
 ```
 
-The **single-binary dev profile** is the floor: SQLite, an in-process queue and
-lease backend, the process driver, local disk and in-process exact vector search.
-It runs the full flow with **no external services**, so neither a developer nor CI
-ever needs Postgres or Qdrant.
+**What that binary does and does not do today.** It serves the API and the
+management UI, opens the store its config names, and appends every event its
+handlers produce to C4's log under the store's own fence — so state survives a
+restart, and the read models are rebuilt from the log at start-up. What it does
+*not* do by default is search: a `[search]` section is off unless configured,
+because a generation makes real provider calls against a real budget. With one, the
+writer takes its shard's lease, runs C6's selection step, stores what it minted and
+appends the events — and a restart folds the population back out of the log rather
+than starting from the seeds again. It also runs work: `POST /experiments`
+queues replicates, four in-process workers claim and evaluate them, and the writer
+records each outcome in the log. All six of S1's plug-in points are implemented, so
+a configured population searches, archives what it finds, proposes candidates and
+gates them — and a human approves or rejects. What is still missing is listed in
+`docs/roadmap.md` ("State"); the largest items are that selection evaluates inside
+the writer rather than through the queue, and that M7 cannot boot without a guest
+that speaks vsock. `docs/roadmap.md` ("State") is the precise list —
+read it before taking a milestone number as a statement about the running system.
 
-The **default profile for an arbitrary location** is Postgres plus Qdrant, which is
-what `docker compose up -d` runs (`Dockerfile`, `deploy/compose/`). The management
-UI is built separately in the devenv (`web/README.md`); S1 serves a page saying so
-until it is.
+The **single-binary dev profile** is the floor: a local-disk store and log, an
+in-process queue, the process driver and in-process exact vector search, with **no
+external services**, so neither a developer nor CI ever needs Postgres or Qdrant.
+The durable backends behind those seams are built with `--features postgres,s3`; a
+binary built without them refuses to start on a config that names one rather than
+keeping that state in memory and looking durable.
+
+The **intended default profile for an arbitrary location** is Postgres plus Qdrant.
+`docker compose up -d` brings all three services up (`Dockerfile`,
+`deploy/compose/`), but S1 there runs the disk-backed config; Postgres, Garage and
+Qdrant are up for C4's own `--ignored` tests, and a build with
+`--features postgres,s3` is what binds them. The management UI is built separately:
+
+```sh
+cd web && npm install && npm run build     # emits web/dist
+AGENT_S1_WEB_ROOT=$PWD/web/dist cargo run -p agent-s1 -- --dev /tmp/s1
+```
+
+S1 serves a page saying how to do that until `web/dist` exists.
 
 ```sh
 cargo run -p agent-seeds -- verify seeds   # the shipped seed set, hash by hash
 cargo test -p agent-driver-fc -- --ignored # the Firecracker driver, on a KVM host
 ```
+
+```sh
+cargo run -p agent-seeds -- import seeds /tmp/s1   # load it into a store
+```
+
+The set ships three Agents plus, for the assistant, everything needed to search
+over it: a Swarm (the environment), a smoke workload, the `completion_rate` metric
+definition, a price table and the starting `Evaluation`. Point a `[search]` section
+at those hashes and the writer evolves the seed — offline, against the deterministic
+provider. The research and document seeds have no Swarm: one needs a live connector
+and the other needs documents, and neither can be evaluated offline without
+inventing a corpus.
+
+The `--ignored` driver-fc test needs `/dev/kvm`, a `firecracker` binary **and a
+guest rootfs that nothing in this repository builds yet**.
 
 ## Rules for this spec set
 1. **Contracts are the only shared surface.** Every component spec depends on `crates/contracts/specs/` and on

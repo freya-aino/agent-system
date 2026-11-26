@@ -2,6 +2,13 @@
 # graph CTEs; Garage for objects and blobs; Qdrant for the vector index (C5
 # descriptors, C8 task-class regions); and the two services.
 #
+# **Postgres, Garage and Qdrant are here for the store's own `--ignored` tests, not
+# for S1.** `agent-s1`'s start-up does not construct them yet (docs/roadmap.md,
+# "State"), so `deploy/compose/s1.toml` selects disk plus the in-process queue and
+# index, and S1 refuses to start on anything else. The three services are up so the
+# C4 integration tests below have something to run against; when S1 binds them,
+# that config file changes and this note goes away.
+#
 # S1 and S2 are **one image, two entrypoints** (see Dockerfile): they share the
 # workspace, and the only difference at run time is which binary starts and what
 # config it reads. S2 reaches S1 on exactly one endpoint (`POST /telemetry`) and
@@ -62,9 +69,11 @@ services:
     volumes:
       - qdrant-data:/qdrant/storage
 
-  # S1: the API, the shard writer and the management UI. The default profile for an
-  # arbitrary location is this one — Postgres plus Qdrant — and it is what the
-  # compose stack runs, so what CI exercises here is what a deployment runs.
+  # S1: the API, the shard writer and the management UI. It runs the config in
+  # `deploy/compose/s1.toml` — disk plus the in-process queue and index, which is
+  # what this build's binary can bind. Note that S1 keeps **no durable state at
+  # all** today: it writes no event log and runs no jobs, so a restart of this
+  # service starts empty (docs/roadmap.md, "State").
   s1:
     build:
       context: .
@@ -83,8 +92,10 @@ services:
       - "58080:8080"
     volumes:
       - ./deploy/compose:/srv/config:ro
-      # The built SPA, if the devenv has built it. Absent is fine: S1 serves a
-      # page saying how to build it rather than a blank 404.
+      # The built SPA, if it has been built. `web/dist` is gitignored and absent on
+      # a fresh clone, in which case Docker creates an empty directory here and S1
+      # serves the page that says how to build it rather than a blank 404. Run
+      # `cd web && npm install && npm run build` first to get the real UI.
       - ./web/dist:/srv/web:ro
       - registry:/srv/registry
     depends_on:

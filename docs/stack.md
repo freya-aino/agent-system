@@ -16,8 +16,10 @@ contracts except where noted.
 - Toolchain: **stable Rust, edition 2024**, pinned by `rust-toolchain.toml` to an exact version that devenv
   supplies; CI builds with that version only, and `rust-version` in the workspace manifest matches it. Bumps are
   ordinary reviewed commits.
-- Dev environment: **devenv** (Nix) provides the pinned toolchain, `firecracker`/`jailer`, Postgres client tools
-  and the compose stack. Host: Linux with `/dev/kvm`.
+- Dev environment: **devenv** (Nix) is to provide the pinned toolchain, `firecracker`/`jailer`, Postgres client
+  tools and the compose stack. Host: Linux with `/dev/kvm`. **Not yet committed**: there is no `devenv.nix` or
+  `flake.nix` in the repository, and no CI either, so the toolchain pin in `rust-toolchain.toml` is honoured by
+  `rustup` on a developer's machine and by nothing else (`docs/roadmap.md`, "State").
 
 ## Services and backends
 | Need | Choice | Notes |
