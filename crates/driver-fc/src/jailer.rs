@@ -140,6 +140,11 @@ impl Jailer {
         chroot_of(&self.chroot_base, id).join("run/vsock.sock")
     }
 
+    /// This sandbox's chroot root on the host.
+    pub fn chroot_root(&self, id: &str) -> PathBuf {
+        chroot_of(&self.chroot_base, id)
+    }
+
     /// What must exist before the jailer runs. Returned rather than created, so a
     /// deployment can pre-build a chroot and a test can assert the layout.
     pub fn required_paths(&self, id: &str) -> Vec<PathBuf> {

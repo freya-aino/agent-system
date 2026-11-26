@@ -433,3 +433,54 @@ fn an_operator_cannot_configure_a_weaker_confinement() {
     config.jailer.uid = 0;
     assert!(FirecrackerDriver::new(config, closure(), price_table(), NoCalls).is_err());
 }
+
+/// The chroot is built before the jailer runs.
+///
+/// `boot()` hands Firecracker the in-chroot paths `/srv/vmlinux` and
+/// `/srv/rootfs.ext4` and trusts something put them there — and nothing did:
+/// `required_paths` and `chroot_files` were called from no non-test code, so every
+/// live boot would have failed on a missing kernel. This checks the staging that
+/// closes it, which is testable without KVM because it is only filesystem work.
+#[test]
+fn the_chroot_is_built_with_exactly_the_kernel_and_the_rootfs() {
+    // The crate's own temp-dir helper: driver-fc has no `tempfile` dev-dependency,
+    // and adding one for a single test would be a dependency for a convenience.
+    let dir = tempdir::Dir::new("m7-chroot");
+    let kernel = dir.path().join("vmlinux");
+    let rootfs = dir.path().join("rootfs.ext4");
+    std::fs::write(&kernel, b"kernel").expect("the kernel");
+    std::fs::write(&rootfs, b"rootfs").expect("the rootfs");
+    let chroot_base = dir.path().join("jail");
+
+    let jailer = Jailer {
+        chroot_base: chroot_base.clone(),
+        ..jailer_config(dir.path())
+    };
+
+    let id = "sandbox-1";
+    for directory in jailer.required_paths(id) {
+        std::fs::create_dir_all(&directory).expect("the chroot layout");
+    }
+    let root = jailer.chroot_root(id);
+    for (source, inside) in jailer.chroot_files(&kernel, &rootfs) {
+        std::fs::hard_link(&source, root.join(&inside))
+            .or_else(|_| std::fs::copy(&source, root.join(&inside)).map(|_| ()))
+            .expect("staging");
+    }
+
+    assert!(
+        root.join("srv/vmlinux").exists(),
+        "the kernel is in the jail"
+    );
+    assert!(root.join("srv/rootfs.ext4").exists(), "and the rootfs");
+    assert!(root.join("run").is_dir(), "and the socket directory");
+
+    // Exactly those, and nothing else: the guest's view is the files it was given
+    // and no host filesystem beyond them.
+    let staged: Vec<String> = std::fs::read_dir(root.join("srv"))
+        .expect("srv")
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(staged.len(), 2, "{staged:?}");
+}

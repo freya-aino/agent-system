@@ -16,6 +16,10 @@ agent-obs.workspace = true
 agent-promotion.workspace = true
 agent-router.workspace = true
 agent-runtime.workspace = true
+# The microvm driver. Linked so a deployment configuring `isolation = "microvm"`
+# can be *checked* rather than merely reporting it: S2 used to report its
+# configured level while a process driver actually ran.
+agent-driver-fc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

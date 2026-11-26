@@ -96,3 +96,34 @@ pub mod tests_support {
     }
 }
 pub use error::FcError;
+
+/// Whether this host can run the microvm driver, and why not when it cannot.
+///
+/// A **probe**, so a deployment that configures `isolation = "microvm"` can refuse
+/// to start rather than reporting microvm while a process driver actually runs.
+/// S2 reported its *configured* level, which was the one thing a reader could not
+/// check.
+///
+/// Deliberately not a driver: constructing one needs a closure and a price table,
+/// which a start-up check does not have. What it needs to know is whether the host
+/// could — `/dev/kvm`, the images, and a jailer command that can be built.
+pub fn host_supports_microvm(
+    images: &image::HostImages,
+    jailer: &jailer::Jailer,
+) -> Result<(), error::FcError> {
+    if !driver::kvm_present() {
+        return Err(error::FcError::NoKvm);
+    }
+    image::check_host(images)?;
+    // A jailer command that cannot be built is a confinement that cannot be
+    // applied, which must not become a VM that runs without it.
+    jailer.command(
+        "probe",
+        &jailer::Cgroups {
+            memory_bytes: 1,
+            cpu_percent: 1,
+            pids_max: 1,
+        },
+    )?;
+    Ok(())
+}

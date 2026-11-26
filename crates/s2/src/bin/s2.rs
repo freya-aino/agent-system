@@ -341,6 +341,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(reason) = config.degraded_reason() {
         eprintln!("agent-s2: isolation degraded: {reason}");
     }
+
+    // **A claimed isolation level is checked, not announced.** S2 reported its
+    // *configured* level while the process driver actually served every run, so
+    // `microvm` in a config file was the one claim a reader could not verify. Now a
+    // host that cannot run it refuses to start and names what is missing.
+    if config.isolation.level == agent_contracts::driver::IsolationLevel::Microvm {
+        if let Err(reason) = microvm_supported(&config) {
+            eprintln!("agent-s2: this host cannot provide microvm isolation: {reason}");
+            eprintln!(
+                "agent-s2: refusing to start rather than serving on weaker isolation than \
+                 the config claims"
+            );
+            return Err(reason.into());
+        }
+        eprintln!("agent-s2: microvm isolation checked: /dev/kvm, the images and the jailer");
+    }
     eprintln!(
         "agent-s2: instance {} on {} isolation, protocols {:?}",
         config.instance,
@@ -395,4 +411,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+}
+
+/// Whether this host can provide the microvm isolation the config claims.
+///
+/// The images and the jail root are required for `microvm`, because a deployment
+/// that claimed it without naming what it would boot was claiming something nothing
+/// could check.
+fn microvm_supported(config: &Config) -> Result<(), String> {
+    let isolation = &config.isolation;
+    let (Some(kernel), Some(rootfs), Some(snapshot_dir), Some(chroot_base)) = (
+        isolation.kernel.clone(),
+        isolation.rootfs.clone(),
+        isolation.snapshot_dir.clone(),
+        isolation.chroot_base.clone(),
+    ) else {
+        return Err(
+            "isolation.level is `microvm` but kernel, rootfs, snapshot_dir and chroot_base \
+             are not all set"
+                .to_owned(),
+        );
+    };
+    let images = agent_driver_fc::image::HostImages {
+        kernel,
+        rootfs,
+        snapshot_dir,
+        // The guest program the rootfs carries, by hash. Part of the image id, so a
+        // different guest is a different image.
+        guest_binary: agent_contracts::types::HashId::from_sha256([0; 32]),
+    };
+    let jailer = agent_driver_fc::jailer::Jailer {
+        binary: std::path::PathBuf::from("jailer"),
+        exec_file: std::path::PathBuf::from("firecracker"),
+        chroot_base,
+        uid: 10_001,
+        gid: 10_001,
+        cgroup_v2: true,
+        // Firecracker's own advanced filter, which is what a deployment should use.
+        seccomp: agent_driver_fc::jailer::Seccomp::Advanced,
+        seccomp_filter: None,
+    };
+    agent_driver_fc::host_supports_microvm(&images, &jailer).map_err(|e| e.to_string())
 }

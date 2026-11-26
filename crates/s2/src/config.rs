@@ -17,6 +17,7 @@
 //! startup log and to every telemetry envelope.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
 use agent_contracts::bundle::{CapacityPolicy, TrustRoot};
 use agent_contracts::driver::IsolationLevel;
@@ -94,6 +95,21 @@ pub struct IsolationConfig {
     /// `microvm` exists to remove.
     #[serde(default)]
     pub container_is_sandboxed: bool,
+    /// Where the guest kernel and rootfs are, for `microvm`.
+    ///
+    /// Required when the level is `microvm`: a deployment that claimed microvm
+    /// isolation without naming the images it would boot was claiming something
+    /// nothing could check, which is how S2 came to report a level a process
+    /// driver was actually serving.
+    #[serde(default)]
+    pub kernel: Option<PathBuf>,
+    #[serde(default)]
+    pub rootfs: Option<PathBuf>,
+    #[serde(default)]
+    pub snapshot_dir: Option<PathBuf>,
+    /// The jail's root. The VMM's chroot is created under it, one per sandbox.
+    #[serde(default)]
+    pub chroot_base: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -330,6 +346,10 @@ pub(crate) mod tests {
                 level,
                 allow_weaker_isolation: false,
                 container_is_sandboxed: false,
+                kernel: None,
+                rootfs: None,
+                snapshot_dir: None,
+                chroot_base: None,
             },
             capacity: None,
             egress_allowlist: vec![],

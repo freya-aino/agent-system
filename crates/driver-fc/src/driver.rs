@@ -130,6 +130,46 @@ impl<M: MeteredCalls> FirecrackerDriver<M> {
         })
     }
 
+    /// Create the chroot's directories and link the kernel and rootfs into it.
+    ///
+    /// **Hard-linked where possible, copied otherwise.** A hard link is atomic and
+    /// costs nothing for a multi-hundred-megabyte rootfs; a copy is the fallback
+    /// when the images are on another filesystem. Either way the guest sees exactly
+    /// these files and no host filesystem beyond them, which is the property
+    /// staging them here exists for.
+    fn stage_chroot(&self, id: &str) -> Result<(), FcError> {
+        for directory in self.config.jailer.required_paths(id) {
+            std::fs::create_dir_all(&directory).map_err(|e| FcError::Unavailable {
+                detail: format!("chroot {}: {e}", directory.display()),
+            })?;
+        }
+        let root = self.config.jailer.chroot_root(id);
+        for (source, inside) in self
+            .config
+            .jailer
+            .chroot_files(&self.config.images.kernel, &self.config.images.rootfs)
+        {
+            let target = root.join(&inside);
+            if target.exists() {
+                // Idempotent: a deployment reusing a chroot must not fail on a file
+                // it already staged.
+                continue;
+            }
+            if std::fs::hard_link(&source, &target).is_err() {
+                // Across filesystems a link is impossible; a copy is the honest
+                // fallback rather than a failure.
+                std::fs::copy(&source, &target).map_err(|e| FcError::Unavailable {
+                    detail: format!(
+                        "staging {} into the chroot as {}: {e}",
+                        source.display(),
+                        inside.display()
+                    ),
+                })?;
+            }
+        }
+        Ok(())
+    }
+
     fn sandbox_id(&mut self) -> String {
         self.next += 1;
         format!("fc-{:08x}", self.next)
@@ -172,6 +212,16 @@ impl<M: MeteredCalls> FirecrackerDriver<M> {
         let (binary, args) = self.config.jailer.command(&id, &cgroups)?;
         let api_socket = self.config.jailer.api_socket(&id);
         let vsock_uds = self.config.jailer.vsock_socket(&id);
+
+        // Build the chroot before the jailer runs.
+        //
+        // `boot()` hands Firecracker the in-chroot paths `/srv/vmlinux` and
+        // `/srv/rootfs.ext4` and trusts that something put them there — and nothing
+        // did: `required_paths` and `chroot_files` were never called from this
+        // module, so every live boot would have failed on a missing kernel. The
+        // guest's view is exactly these files and no host filesystem beyond them,
+        // which is the property staging them here is for.
+        self.stage_chroot(&id)?;
 
         let child = Command::new(&binary)
             .args(&args)

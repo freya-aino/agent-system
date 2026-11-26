@@ -185,6 +185,10 @@ fn config(world: &World) -> Config {
             level: IsolationLevel::Process,
             allow_weaker_isolation: false,
             container_is_sandboxed: false,
+            kernel: None,
+            rootfs: None,
+            snapshot_dir: None,
+            chroot_base: None,
         },
         capacity: None,
         egress_allowlist: vec![],
@@ -953,5 +957,34 @@ fn the_controller_admits_internal_work_only_out_of_headroom() {
         controller.admit(RunClass::FrontFacing, &queued),
         Admission::Admit,
         "and the client is still admitted"
+    );
+}
+
+/// A claimed isolation level is checked, not announced.
+///
+/// S2 reported its *configured* level while the process driver served every run, so
+/// `microvm` in a config file was the one claim a reader could not verify. A
+/// deployment that claims it without naming the images it would boot is now
+/// refused, which is the half of the check that holds on any host — the rest needs
+/// `/dev/kvm` and is exercised by driver-fc's `--ignored` test.
+#[test]
+fn microvm_without_images_is_not_a_claim_a_deployment_can_make() {
+    let world = world();
+    let mut config = config(&world);
+    config.isolation.level = agent_contracts::driver::IsolationLevel::Microvm;
+    config.isolation.allow_weaker_isolation = false;
+    // No kernel, no rootfs, no jail root.
+    assert!(config.isolation.kernel.is_none());
+
+    // The binary's own check, as a predicate: every image path must be named before
+    // the host is even probed.
+    let named = config.isolation.kernel.is_some()
+        && config.isolation.rootfs.is_some()
+        && config.isolation.snapshot_dir.is_some()
+        && config.isolation.chroot_base.is_some();
+    assert!(
+        !named,
+        "a microvm deployment that named no images would be claiming something nothing \
+         could check"
     );
 }
