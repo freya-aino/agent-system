@@ -128,10 +128,10 @@ impl QdrantVectorIndex {
 
     /// The collection's metric: from the cache, else from the service.
     async fn metric_of(&self, collection: &str) -> Result<Metric> {
-        if let Ok(cache) = self.metrics.lock() {
-            if let Some(metric) = cache.get(collection) {
-                return Ok(*metric);
-            }
+        if let Ok(cache) = self.metrics.lock()
+            && let Some(metric) = cache.get(collection)
+        {
+            return Ok(*metric);
         }
         let info = self
             .collection_info(collection)

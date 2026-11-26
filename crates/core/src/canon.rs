@@ -231,6 +231,92 @@ pub fn hash_primitive_value(value: &Value) -> Result<HashId, Diagnostic> {
 /// property happens to be named `label` keeps it — there it is data, not
 /// presentation.
 pub fn hash_unit_value(value: &Value) -> Result<HashId, Diagnostic> {
+    Canon::default().hash(DomainTag::Unit, &unit_hashable(value))
+}
+
+/// The projection whose canonical encoding **is** an object's stored bytes, per
+/// domain tag.
+///
+/// Identity and storage have to agree on one byte string, and they did not. A
+/// store is content-addressed by `sha256(bytes)` (C4's `record_hash`, and
+/// `verify`), while a Unit's or a Primitive's identity is the tagged hash of a
+/// *projection* that strips `labels`, `hash` and each graph node's `label`. So the
+/// bytes a component must write to land an object under the id every other
+/// component knows it by are neither its own JSON nor the encoding of its own
+/// JSON — they are the encoding of the projection, **with** the domain-tag prefix.
+///
+/// Nothing in the workspace did that. `Store::put_verified` claimed the two paths
+/// "agree by construction"; they agree only through this function. The seed set's
+/// on-disk format strips the tag prefix so that a file is readable JSON, which
+/// means a seed file's bytes do not hash to the id in its own name — its verifier
+/// never compared them, so the mismatch was invisible, and the importer's only
+/// `Sink` was in memory, so it was never exercised against a store.
+pub fn object_bytes(tag: DomainTag, value: &Value) -> Result<Vec<u8>, Diagnostic> {
+    match tag {
+        DomainTag::Unit => canonicalize(DomainTag::Unit, &unit_hashable(value)),
+        DomainTag::Primitive => {
+            canonicalize(DomainTag::Primitive, &strip_top(value, &["labels", "hash"]))
+        }
+        other => canonicalize(other, value),
+    }
+}
+
+/// Parse bytes written by [`object_bytes`] back into a value.
+///
+/// The domain-tag prefix is part of what was hashed, so it is part of what is
+/// stored — and it is not JSON, so every reader has to strip it. Doing that in one
+/// place is what keeps "the bytes hash to the id" and "the bytes parse" from being
+/// mutually exclusive.
+pub fn parse_object(tag: DomainTag, bytes: &[u8]) -> Result<Value, Diagnostic> {
+    let prefix = tag.as_str().len() + 1;
+    let body = bytes.get(prefix..).ok_or_else(|| {
+        Diagnostic::error(
+            "not_canonical",
+            "$",
+            "object bytes are shorter than their domain-tag prefix",
+        )
+    })?;
+    if !bytes.starts_with(tag.as_str().as_bytes()) {
+        return Err(Diagnostic::error(
+            "not_canonical",
+            "$",
+            "object bytes do not carry the domain tag they were read as",
+        ));
+    }
+    serde_json::from_slice(body).map_err(|e| {
+        Diagnostic::error(
+            "not_canonical",
+            "$",
+            format!("object bytes are not canonical JSON: {e}"),
+        )
+    })
+}
+
+/// The domain tag an object's own shape implies.
+///
+/// Objects are self-describing because the store is not: an envelope's `kind_hint`
+/// is metadata and "adds no new truth" (C4), so a reader that needed to be told a
+/// tag would be trusting something unhashed.
+///
+/// The discriminant is a **mandatory** field the other type does not have at all:
+/// `interface` for a Unit, `body` for a Primitive.
+///
+/// Not `kind`, which both carry. And not `graph`, which is `Option` — an L1 Node has
+/// none, so a `graph` test silently classifies every Node as not-a-Unit and drops it
+/// out of every closure that names one.
+pub fn tag_of(value: &Value) -> Option<DomainTag> {
+    if value.get("interface").is_some() {
+        Some(DomainTag::Unit)
+    } else if value.get("body").is_some() || value.get("body_schema").is_some() {
+        Some(DomainTag::Primitive)
+    } else {
+        None
+    }
+}
+
+/// The projection `hash_unit_value` hashes, shared with [`object_bytes`] so the
+/// identity and the stored bytes cannot drift apart.
+fn unit_hashable(value: &Value) -> Value {
     let mut v = strip_top(value, &["labels", "hash"]);
     if let Some(Value::Object(graph)) = v.get_mut("graph")
         && let Some(Value::Object(nodes)) = graph.get_mut("nodes")
@@ -241,7 +327,7 @@ pub fn hash_unit_value(value: &Value) -> Result<HashId, Diagnostic> {
             }
         }
     }
-    Canon::default().hash(DomainTag::Unit, &v)
+    v
 }
 
 fn strip_top(value: &Value, keys: &[&str]) -> Value {
@@ -408,6 +494,108 @@ pub(crate) fn js_number(f: f64) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// **The invariant that makes identity and storage one thing.** A
+    /// content-addressed store keys an object by `sha256(bytes)`; every other
+    /// component knows the object by `hash_unit_value`. If these two disagree, an
+    /// object cannot be stored under the id anything looks it up by — which is
+    /// exactly what was true before `object_bytes` existed.
+    #[test]
+    fn a_units_stored_bytes_hash_to_its_identity() {
+        let unit = json!({
+            "kind": "agent",
+            "level": 2,
+            "interface": {},
+            "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "labels": ["presentation only"],
+            "graph": {
+                "nodes": {
+                    "a": { "primitive": "p", "label": "also presentation only" }
+                }
+            }
+        });
+        let bytes = object_bytes(DomainTag::Unit, &unit).expect("stored bytes");
+        let identity = hash_unit_value(&unit).expect("identity");
+        assert!(
+            verify(&identity, &bytes),
+            "the bytes a store holds must hash to the id every component knows"
+        );
+
+        // And the excluded fields really are excluded: changing them changes
+        // neither the identity nor the bytes.
+        let mut relabelled = unit.clone();
+        relabelled["labels"] = json!(["something else"]);
+        relabelled["graph"]["nodes"]["a"]["label"] = json!("renamed");
+        assert_eq!(
+            object_bytes(DomainTag::Unit, &relabelled).expect("bytes"),
+            bytes,
+            "presentation fields are not stored, so they cannot change an id"
+        );
+    }
+
+    /// The same for a Primitive, whose projection differs (no graph nodes).
+    #[test]
+    fn a_primitives_stored_bytes_hash_to_its_identity() {
+        let primitive = json!({
+            "kind": "prompt",
+            "body": { "template": "Answer: {{input}}" },
+            "labels": ["ignored"],
+        });
+        let bytes = object_bytes(DomainTag::Primitive, &primitive).expect("bytes");
+        assert!(verify(
+            &hash_primitive_value(&primitive).expect("identity"),
+            &bytes
+        ));
+    }
+
+    /// Stored bytes carry the domain-tag prefix, because the prefix is part of what
+    /// was hashed. A reader therefore cannot just hand them to a JSON parser.
+    #[test]
+    fn stored_bytes_round_trip_through_parse_object() {
+        let primitive = json!({ "kind": "prompt", "body": { "template": "x" } });
+        let bytes = object_bytes(DomainTag::Primitive, &primitive).expect("bytes");
+        assert!(
+            serde_json::from_slice::<Value>(&bytes).is_err(),
+            "the tag prefix is not JSON: a reader must strip it"
+        );
+        assert_eq!(
+            parse_object(DomainTag::Primitive, &bytes).expect("parsed"),
+            primitive
+        );
+        // Read as the wrong domain, it is refused rather than mis-parsed.
+        assert!(parse_object(DomainTag::Unit, &bytes).is_err());
+    }
+
+    /// An object says what it is, so a reader never has to be told a tag by
+    /// something unhashed.
+    #[test]
+    fn an_object_declares_its_own_domain() {
+        assert_eq!(
+            tag_of(&json!({ "level": 2, "kind": "agent", "interface": {} })),
+            Some(DomainTag::Unit),
+            "an interface makes it a Unit"
+        );
+        assert_eq!(
+            tag_of(&json!({ "level": 1, "kind": "node/transform", "interface": {} })),
+            Some(DomainTag::Unit),
+            "including an L1 Node, which has no graph at all — the case a `graph` \
+             test drops out of every closure that names one"
+        );
+        assert_eq!(
+            tag_of(&json!({ "kind": "prompt", "body": {}, "body_schema": "sha256:aa" })),
+            Some(DomainTag::Primitive)
+        );
+        assert_eq!(
+            tag_of(&json!({ "kind": "prompt", "body": {} })),
+            Some(DomainTag::Primitive),
+            "a `body` is enough: a Unit has no such field"
+        );
+        assert_eq!(
+            tag_of(&json!({ "kind": "prompt" })),
+            None,
+            "`kind` alone is neither: both carry it"
+        );
+    }
 
     #[test]
     fn js_number_matches_ecmascript_rules() {

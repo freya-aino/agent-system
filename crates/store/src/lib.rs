@@ -200,8 +200,16 @@ impl<B: Backend, C: Clock> Store<B, C> {
     }
 
     /// `put` with a caller-supplied hash, which is verified first. This is the call
-    /// a component uses when it already computed a Unit's compile hash: canonical
-    /// bytes hash to the same digest, so the two paths agree by construction.
+    /// a component uses when it already computed a Unit's compile hash.
+    ///
+    /// **The bytes must be `canon::object_bytes(tag, value)`.** This used to say the
+    /// two paths "agree by construction"; they do not agree for a Unit or a
+    /// Primitive unless the caller applies the same projection the identity is
+    /// hashed over — `labels`, `hash` and each graph node's `label` stripped — and
+    /// keeps the domain-tag prefix. A Unit's own serialised JSON hashes to
+    /// something no component looks it up by, so `put` of it lands an object nobody
+    /// can find. `canon::object_bytes` is the only correct producer and
+    /// `canon::parse_object` the only correct reader.
     pub async fn put_verified(&self, zone: Zone, id: &HashId, bytes: &[u8]) -> Result<HashId> {
         self.require_write(zone)?;
         if !canon::verify(id, bytes) {

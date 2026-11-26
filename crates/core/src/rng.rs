@@ -14,12 +14,29 @@ use sha2::{Digest, Sha256};
 pub type Rng = ChaCha20Rng;
 
 /// Hashing, not stream splitting: order-free and identical on every platform.
+/// How many bits a derived seed keeps.
+///
+/// 48, so a seed is below 2^53 and therefore **exactly representable in the
+/// canonical encoding** (`hash.md`: a number above that must be a decimal string).
+/// Every derived seed is eventually recorded — on a span, in a `VariantRef`, in an
+/// outcome — and a seed that cannot be encoded is a run that cannot be stored.
+///
+/// It was unmasked, and the consequence was that **no Trace containing a span
+/// could be canonically encoded at all**: `$.spans[0].seed` was a full 64-bit
+/// digest and the encoder refused it. Nothing noticed because nothing had ever
+/// stored an inbound Trace. `s2::runtime` masked its own run seeds for exactly this
+/// reason, which is the same rule applied one call site at a time; here it holds for
+/// every caller.
+pub const SEED_BITS: u32 = 48;
+
+/// A derived seed: a function of a parent seed and a label, and recordable.
 pub fn derive(seed: u64, label: &str) -> u64 {
     let mut h = Sha256::new();
     h.update(seed.to_le_bytes());
     h.update(label.as_bytes());
     let digest = h.finalize();
-    u64::from_le_bytes(digest[0..8].try_into().expect("8 bytes"))
+    let full = u64::from_le_bytes(digest[0..8].try_into().expect("8 bytes"));
+    full & ((1u64 << SEED_BITS) - 1)
 }
 
 pub fn rng(seed: u64) -> ChaCha20Rng {
@@ -79,10 +96,33 @@ mod tests {
     #[test]
     fn pinned_derive_value_is_stable() {
         // Golden value: a change here is a reproducibility break, not a refactor.
+        //
+        // It changed **once**, deliberately: the low 48 bits are now kept so a
+        // derived seed is exactly representable in the canonical encoding. Before
+        // that no Trace containing a span could be encoded at all, so there were no
+        // recorded runs for the change to break.
         assert_eq!(derive(0, ""), {
             let d = Sha256::digest(0u64.to_le_bytes());
-            u64::from_le_bytes(d[0..8].try_into().unwrap())
+            u64::from_le_bytes(d[0..8].try_into().unwrap()) & ((1u64 << SEED_BITS) - 1)
         });
         assert_eq!(derive(1, "bootstrap"), derive(1, "bootstrap"));
+    }
+
+    /// The property that matters more than the exact value: every derived seed can
+    /// be written down. A seed above 2^53 is a run that cannot be stored.
+    #[test]
+    fn every_derived_seed_is_canonically_encodable() {
+        for (seed, label) in [(0u64, ""), (7, "a"), (u64::MAX, "n0#3"), (1, "bootstrap")] {
+            let derived = derive(seed, label);
+            assert!(
+                derived < (1u64 << 53),
+                "derive({seed}, {label:?}) = {derived} is above the safe-integer limit"
+            );
+            crate::canon::canonicalize(
+                crate::canon::DomainTag::Trace,
+                &serde_json::json!({ "seed": derived }),
+            )
+            .expect("a derived seed encodes");
+        }
     }
 }

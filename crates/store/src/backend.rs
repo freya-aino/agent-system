@@ -11,6 +11,7 @@
 
 use agent_contracts::store::Zone;
 
+pub mod any;
 pub mod disk;
 pub mod memory;
 #[cfg(feature = "postgres")]
