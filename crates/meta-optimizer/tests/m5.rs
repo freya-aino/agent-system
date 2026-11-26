@@ -711,3 +711,119 @@ fn a_minimal_io_dataset_screens_the_group_the_loop_actually_runs() {
         other => panic!("{other:?}"),
     }
 }
+
+/// `MethodRef::Rl` has an execution path.
+///
+/// It used to have none: `Campaign.method` was read exactly once, to copy into a
+/// `campaign_started` event, so MCMC was the only method `run_campaign` could run
+/// and the `Chooser` enum named a decision nothing made. This runs a campaign under
+/// the learned policy and checks that the policy's mix actually reached the slices.
+#[test]
+fn a_campaign_can_run_under_the_learned_policy() {
+    use agent_meta_optimizer::campaign::{Slice, SliceOutcome, run_campaign_with};
+    use agent_meta_optimizer::rl::{Features, Learned, Policy};
+
+    /// A runner that records the mix it was handed.
+    struct Recording {
+        mixes: Vec<Option<Vec<agent_contracts::campaign::OperatorWeight>>>,
+    }
+    impl agent_meta_optimizer::campaign::OptimizerRunner for Recording {
+        fn run_slice(
+            &mut self,
+            slice: &Slice,
+        ) -> Result<SliceOutcome, agent_meta_optimizer::MetaError> {
+            self.mixes.push(slice.config.operators.clone());
+            Ok(SliceOutcome {
+                best: Some(agent_contracts::types::HashId::from_sha256([9; 32])),
+                value: 0.5,
+                spent: agent_contracts::types::Budget {
+                    tokens: 10,
+                    cost: 1.0,
+                    wall_ms: 10,
+                    runs: 1,
+                },
+                pareto_advance: true,
+                generations: 1,
+            })
+        }
+    }
+
+    let operators = vec!["prompt_edit".to_owned(), "model_swap".to_owned()];
+    let policy = Policy::new(operators.clone(), 0.1).expect("a policy");
+    let learned = Learned::new(policy, Features::of(2, 2, true, 0.1));
+
+    // A campaign that names `rl` gets the learned chooser.
+    let mut method = agent_meta_optimizer::campaign::method_for(
+        &agent_contracts::campaign::MethodRef::Rl,
+        Some(learned),
+    )
+    .expect("rl with a policy is dispatchable");
+
+    let mut runner = Recording { mixes: vec![] };
+    let campaign = campaign(10.0, 3, 2);
+    let outcome = run_campaign_with(
+        campaign,
+        agent_meta_optimizer::reward::Weights::default(),
+        &agent_contracts::types::HashId::from_sha256([5; 32]),
+        &agent_meta_optimizer::campaign::Plan::new(1),
+        &mut runner,
+        method.as_mut(),
+    )
+    .expect("the campaign runs");
+
+    assert!(!runner.mixes.is_empty(), "at least one slice ran");
+    let mix = runner.mixes[0]
+        .as_ref()
+        .expect("the policy supplied a mix, rather than leaving it to the bandit");
+    assert_eq!(mix.len(), operators.len(), "one weight per arm");
+    // Every arm keeps a floor, so no operator becomes unreachable: a policy that
+    // drove one to zero could never learn it had become useful again.
+    for weight in mix {
+        assert!(
+            weight.weight >= agent_meta_optimizer::rl::MIN_PROBABILITY,
+            "{} fell below the floor at {}",
+            weight.name,
+            weight.weight
+        );
+    }
+    assert!(outcome.spent.runs > 0);
+}
+
+/// A campaign naming `rl` without a trained policy is refused, rather than quietly
+/// running the bandit and reporting the result under a method that did not produce
+/// it.
+#[test]
+fn rl_without_a_policy_is_refused_rather_than_silently_the_bandit() {
+    // Matched rather than unwrapped: a `Box<dyn Method>` is not `Debug`.
+    match agent_meta_optimizer::campaign::method_for(
+        &agent_contracts::campaign::MethodRef::Rl,
+        None,
+    ) {
+        Err(err) => assert!(format!("{err}").contains("policy"), "{err}"),
+        Ok(_) => panic!("rl without a policy must be refused"),
+    }
+}
+
+/// Every other method is the bandit, and that is the design rather than a stub:
+/// they differ in how they *propose*, which is C6's operator set, not in how a
+/// slice's mix is weighted.
+#[test]
+fn the_other_methods_leave_the_mix_to_the_bandit() {
+    for named in [
+        agent_contracts::campaign::MethodRef::Mcmc,
+        agent_contracts::campaign::MethodRef::Ga,
+        agent_contracts::campaign::MethodRef::Qd,
+        agent_contracts::campaign::MethodRef::Gepa,
+    ] {
+        let mut method =
+            agent_meta_optimizer::campaign::method_for(&named, None).expect("dispatchable");
+        assert!(
+            agent_meta_optimizer::campaign::Method::operators(
+                method.as_mut(),
+                &campaign(10.0, 3, 2)
+            )
+            .is_none(),
+            "{named:?} should leave the mix to C6's bandit"
+        );
+    }
+}

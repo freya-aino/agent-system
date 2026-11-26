@@ -347,6 +347,114 @@ fn binomial(n: usize, k: usize) -> f64 {
     result
 }
 
+/// The operator version a policy's weights are a claim about.
+///
+/// C6's operators are `1.0.0`; a weight is a statement about a specific operator,
+/// so the version travels with it rather than being resolved later.
+pub const OPERATOR_VERSION: &str = "1.0.0";
+
+/// The learned policy as a [`crate::campaign::Method`].
+///
+/// This is what `MethodRef::Rl` dispatches to, and what the `Chooser` enum was
+/// for: nothing referenced it outside this module, so the policy could be trained
+/// and never consulted. The policy's probabilities become the slice's operator
+/// weights, which is the only influence a method has over a slice.
+///
+/// **Still off unless a campaign names it.** Two adaptive loops over one noisy
+/// reward can chase each other, so a deployment turns this on when it has enough
+/// history for the policy to beat the bandit's own counts — and
+/// [`Policy::adopted`] is what says so, measured rather than assumed.
+pub struct Learned {
+    policy: Policy,
+    features: Features,
+    /// The mix handed to the last slice, so its reward can be attributed.
+    last: Option<(String, f64)>,
+    /// Slices run under this policy, and how many advanced the front. The sign
+    /// test's input.
+    slices: u64,
+    wins: u64,
+}
+
+impl Learned {
+    pub fn new(policy: Policy, features: Features) -> Learned {
+        Learned {
+            policy,
+            features,
+            last: None,
+            slices: 0,
+            wins: 0,
+        }
+    }
+
+    pub fn policy(&self) -> &Policy {
+        &self.policy
+    }
+
+    /// Whether the policy has earned the right to replace the bandit.
+    pub fn adopted(&self) -> bool {
+        self.policy.adopted()
+    }
+}
+
+impl crate::campaign::Method for Learned {
+    /// The policy's probabilities, as operator weights.
+    ///
+    /// Every arm keeps at least [`MIN_PROBABILITY`], so no operator becomes
+    /// unreachable: a policy that drove one arm to zero could never learn it had
+    /// become useful again.
+    fn operators(
+        &mut self,
+        _campaign: &agent_contracts::campaign::Campaign,
+    ) -> Option<Vec<agent_contracts::campaign::OperatorWeight>> {
+        let probabilities = self.policy.probabilities(&self.features);
+        if self.policy.operators.is_empty() {
+            return None;
+        }
+        Some(
+            self.policy
+                .operators
+                .iter()
+                .zip(&probabilities)
+                .map(|(name, weight)| agent_contracts::campaign::OperatorWeight {
+                    name: name.clone(),
+                    // The operator's own version, which the weight is a claim
+                    // about: a mix that named an operator without one would be a
+                    // claim about whichever version happened to be loaded.
+                    version: OPERATOR_VERSION.to_owned(),
+                    weight: *weight,
+                })
+                .collect(),
+        )
+    }
+
+    /// Learn from what the slice achieved.
+    ///
+    /// The reward is whether a **real** evaluation advanced the front, which is the
+    /// signal `SliceOutcome.pareto_advance` carries and the one a surrogate may not
+    /// set. The propensity is the probability the policy gave the arm it picked, so
+    /// an old sample stays usable.
+    fn observed(&mut self, outcome: &crate::campaign::SliceOutcome) {
+        self.slices += 1;
+        if outcome.pareto_advance {
+            self.wins += 1;
+        }
+        // Which arm this slice is attributed to: the one the policy would pick for
+        // the current state, which is the mix it actually supplied.
+        let (operator, propensity) = self
+            .last
+            .clone()
+            .unwrap_or_else(|| self.policy.choose(&self.features, 0.5));
+        self.policy.update(&Sample {
+            features: self.features,
+            operator: operator.clone(),
+            reward: if outcome.pareto_advance { 1.0 } else { 0.0 },
+            propensity,
+            child: None,
+        });
+        self.last = Some((operator, propensity));
+    }
+}
+
 /// Which chooser a campaign is using. The policy is **off by default**, and the
 /// value says which one made a decision so an event can record it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

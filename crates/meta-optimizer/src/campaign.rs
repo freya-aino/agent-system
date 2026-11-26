@@ -24,7 +24,7 @@
 //! `campaign_stopped{reason: reweighted}` + `campaign_started` pair, never a silent
 //! edit of a running campaign.
 
-use agent_contracts::campaign::{Campaign, OperatorWeight, OptimizerConfig};
+use agent_contracts::campaign::{Campaign, MethodRef, OperatorWeight, OptimizerConfig};
 use agent_contracts::events::{CampaignStarted, CampaignStopped, StopReason};
 use agent_contracts::types::{Budget, HashId, Population};
 
@@ -285,6 +285,74 @@ pub fn run_campaign(
     planning: &Plan,
     runner: &mut dyn OptimizerRunner,
 ) -> Result<Outcome, MetaError> {
+    run_campaign_with(campaign, weights, suite, planning, runner, &mut Bandit)
+}
+
+/// What chooses the operator mix for each slice.
+///
+/// **`Campaign.method` had no execution path.** It was read exactly once, to copy
+/// into a `campaign_started` event, so MCMC was the only method `run_campaign`
+/// could run and `MethodRef::Rl` named something unreachable. This is the seam the
+/// method dispatches on: a method's whole influence on a slice is the mix of
+/// operators it asks for, and everything else — slicing, the stop policy, the
+/// equal-budget rule — is the same for every method by design.
+pub trait Method {
+    /// The operator weights for the next slice, or `None` to leave the choice to
+    /// C6's own per-population bandit.
+    fn operators(&mut self, campaign: &Campaign) -> Option<Vec<OperatorWeight>>;
+
+    /// What the slice achieved, so a learning method can learn from it. A method
+    /// that does not learn ignores it.
+    fn observed(&mut self, _outcome: &SliceOutcome) {}
+}
+
+/// The default: C6's bandit decides, which is what every campaign did before a
+/// method could be dispatched on.
+pub struct Bandit;
+
+impl Method for Bandit {
+    fn operators(&mut self, _campaign: &Campaign) -> Option<Vec<OperatorWeight>> {
+        None
+    }
+}
+
+/// The method a campaign names, as something that can choose.
+///
+/// **The bandit is the answer for every method but `Rl`**, and that is not a
+/// placeholder: MCMC, GA, QD, MCTS and GEPA differ in how they *propose*, which is
+/// C6's operator set, not in how a slice's mix is weighted. `Rl` is the one method
+/// whose whole contribution is the weighting, which is why it is the one with a
+/// chooser — and it needs a trained `Policy`, so a campaign naming it without one
+/// is told so rather than silently running the bandit.
+pub fn method_for(
+    method: &MethodRef,
+    learned: Option<crate::rl::Learned>,
+) -> Result<Box<dyn Method>, MetaError> {
+    match method {
+        MethodRef::Rl => match learned {
+            Some(learned) => Ok(Box::new(learned)),
+            None => Err(MetaError::invalid(
+                "method",
+                "a campaign naming `rl` needs a trained policy; running the bandit instead \
+                 would report results under a method that did not produce them",
+            )),
+        },
+        _ => Ok(Box::new(Bandit)),
+    }
+}
+
+/// `run_campaign` with the method's chooser supplied.
+///
+/// Separate from [`run_campaign`] so the default stays a one-argument call: a
+/// campaign that does not name a learned method should not have to pass one.
+pub fn run_campaign_with(
+    campaign: Campaign,
+    weights: Weights,
+    suite: &HashId,
+    planning: &Plan,
+    runner: &mut dyn OptimizerRunner,
+    method: &mut dyn Method,
+) -> Result<Outcome, MetaError> {
     let mut running = Running::start(campaign, weights);
     let mut events = vec![running.started()];
     let mut decision = StopDecision {
@@ -295,7 +363,14 @@ pub fn run_campaign(
     };
 
     for _ in 0..planning.slices {
-        let slices = plan(&running.campaign, planning, suite)?;
+        // The method's mix for this round, if it has an opinion. An opinion
+        // overrides the plan's; a method that has none leaves the plan alone, and
+        // the plan leaving it alone leaves it to C6's bandit.
+        let mut planning = planning.clone();
+        if let Some(operators) = method.operators(&running.campaign) {
+            planning.operators = Some(operators);
+        }
+        let slices = plan(&running.campaign, &planning, suite)?;
         let mut ran_any = false;
         for slice in &slices {
             if !running.affordable(slice) {
@@ -309,6 +384,9 @@ pub fn run_campaign(
             }
             let outcome = runner.run_slice(slice)?;
             running.observe(&outcome);
+            // The method hears what its mix achieved. For a learned policy this is
+            // the reward signal; for the bandit it is nothing.
+            method.observed(&outcome);
             events.push(MetaEvent::SliceRun {
                 campaign: running.campaign.id.clone(),
                 population: slice.population.clone(),
